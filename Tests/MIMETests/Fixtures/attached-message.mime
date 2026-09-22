@@ -1,0 +1,15 @@
+Content-Type: multipart/mixed; boundary=x
+
+preamble
+--x
+Content-Disposition: attachment; filename=mail.eml
+Content-Type: message/rfc822
+
+Subject: inner
+
+attached
+--x
+
+outer
+--x--
+epilogue

@@ -26,7 +26,7 @@ public struct Container: Sendable {
         }
 
         let start = newline + 1
-        guard length <= data.count - start else {
+        guard length <= data.endIndex - start else {
             throw Error.partialMessage
         }
         let payload = data.subdata(in: start ..< (start + length))
@@ -34,7 +34,7 @@ public struct Container: Sendable {
             throw Error.malformedMessage("missing MIME header boundary")
         }
         self.payload = payload
-        trailer = data.subdata(in: (start + length) ..< data.count)
+        trailer = data.subdata(in: (start + length) ..< data.endIndex)
     }
 
 }

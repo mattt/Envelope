@@ -1,0 +1,12 @@
+Content-Type: multipart/alternative; boundary=x
+
+preamble
+--x
+Content-Type: text/html
+
+<p>HTML</p>
+--x
+
+Plain
+--x--
+epilogue

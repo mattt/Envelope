@@ -1,0 +1,10 @@
+Content-Type: multipart/mixed; boundary=x
+
+preamble
+--x
+
+before --x-- after
+--x-more
+last
+--x--
+epilogue

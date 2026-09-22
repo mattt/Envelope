@@ -1,0 +1,86 @@
+{
+  "lf": {
+    "body": "Body",
+    "provenance": "Independently authored synthetic fixture; see Documentation/MIME.md"
+  },
+  "utf8": {
+    "body": "café",
+    "provenance": "Independently authored synthetic fixture; see Documentation/MIME.md"
+  },
+  "words": {
+    "body": "Body",
+    "provenance": "Independently authored synthetic fixture; see Documentation/MIME.md"
+  },
+  "multipart": {
+    "body": "Plain",
+    "provenance": "Independently authored synthetic fixture; see Documentation/MIME.md"
+  },
+  "legacy": {
+    "body": "café",
+    "provenance": "Independently authored synthetic fixture; see Documentation/MIME.md"
+  },
+  "last-alternative": {
+    "body": "last",
+    "provenance": "Independently authored synthetic fixture. RFC 2046 §5.1.4; local plain-text preference"
+  },
+  "related-start": {
+    "body": "root",
+    "provenance": "Independently authored synthetic fixture. RFC 2387 §3.2"
+  },
+  "attached-message": {
+    "body": "outer",
+    "provenance": "Independently authored synthetic fixture. RFC 2183; local attachment exclusion"
+  },
+  "inline-message": {
+    "body": "inside",
+    "provenance": "Independently authored synthetic fixture. RFC 2046 §5.2.1"
+  },
+  "boundary-text": {
+    "body": "before --x-- after\n--x-more\nlast",
+    "provenance": "Independently authored synthetic fixture. RFC 2046 §5.1.1"
+  },
+  "filename": {
+    "body": "body",
+    "provenance": "Independently authored synthetic fixture. RFC 2231 §§3–4"
+  },
+  "signed": {
+    "body": "readable",
+    "provenance": "Independently authored synthetic fixture. RFC 2046 multipart structure; no verification"
+  },
+  "folded": {
+    "body": "body",
+    "provenance": "Independently authored synthetic fixture. RFC 5322 §2.2.3"
+  },
+  "truncated": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. RFC 2046 §5.1.1; closing delimiter required"
+  },
+  "duplicate": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. Ambiguous structural fields rejected"
+  },
+  "bad-base64": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. RFC 2045 §6.8"
+  },
+  "bad-qp": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. RFC 2045 §6.7"
+  },
+  "unknown-charset": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. No charset guessing"
+  },
+  "continuation-gap": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. RFC 2231 §3"
+  },
+  "encrypted": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. Encrypted content rejected"
+  },
+  "partial": {
+    "body": null,
+    "provenance": "Independently authored synthetic fixture. Incomplete messages rejected"
+  }
+}

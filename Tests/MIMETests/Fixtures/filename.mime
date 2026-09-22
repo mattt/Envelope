@@ -1,0 +1,14 @@
+Content-Type: multipart/mixed; boundary=x
+
+preamble
+--x
+
+body
+--x
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename=plain; filename*0*=utf-8''caf%C3; filename*1*=%A9.txt
+Content-Transfer-Encoding: base64
+
+YQ==
+--x--
+epilogue

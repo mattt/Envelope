@@ -1,0 +1,14 @@
+Content-Type: multipart/related; boundary=x; start="<root>"
+
+preamble
+--x
+Content-Type: text/html
+Content-ID: <first>
+
+html
+--x
+Content-ID: <root>
+
+root
+--x--
+epilogue

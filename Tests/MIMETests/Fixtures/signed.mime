@@ -1,0 +1,12 @@
+Content-Type: multipart/signed; boundary=x
+
+preamble
+--x
+
+readable
+--x
+Content-Type: application/pgp-signature
+
+signature
+--x--
+epilogue

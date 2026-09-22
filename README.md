@@ -6,12 +6,11 @@ It provides two Swift modules:
 - `Mail` reads metadata from the live `Envelope Index` SQLite database
   and locates `.emlx` message files.
 - `Emlx` separates an `.emlx` file's MIME payload from its trailing bytes
-  and parses readable content with MimeFoundation.
+  and parses readable content with an internal MIME reader.
 
 ## Requirements
 
 Envelope requires macOS 13 or later and Swift 6.1 or later.
-The pinned MimeFoundation revision requires Swift 6.1.
 Development requires Xcode with a compatible macOS SDK.
 
 The caller must have access to the Mail folder.
@@ -112,6 +111,13 @@ HTML remains data; Envelope does not load remote content.
 Encrypted, partial, malformed, and unsupported content produces typed errors.
 `Emlx.Container` exposes the counted payload and unparsed trailing bytes.
 It does not require a valid trailing property list.
+The complete input to `Emlx.Content`, including trailing bytes, is limited to 32 MiB.
+MIME parsing permits 64 nesting levels below the root, 1,024 entities,
+256 KiB of headers per entity, 1 MiB of total headers,
+and 64 MiB of decoded UTF-8 output.
+Resource failures use `unsupportedMessage`.
+See the [behavior specification](Documentation/MIME.md) for body selection,
+strict decoding, recovery rules, and verification tooling.
 
 ### Limits and cancellation
 
@@ -132,7 +138,9 @@ Use each database on one thread at a time.
 Overlapping calls fail immediately, including during file reads.
 Its cancellation signal reaches synchronous database and file operations.
 Pass `cancellation.check` to `Emlx.Content` to extend that signal through parsing.
-MIME decoding and filesystem calls can delay a cancellation check.
+The MIME reader checks cancellation while scanning and decoding,
+and before and after platform charset conversion.
+Filesystem calls and platform conversion can delay cancellation.
 
 File reads check folder containment and accept regular files up to 32 MiB.
 Cached locations are hints and are checked again on every read.
@@ -168,9 +176,9 @@ It does not fetch missing messages, change read state, compose, or send mail.
 
 Yes.
 The `Mail` target uses Foundation, the system SQLite3 module, and system locks.
-It has no dependency on `Emlx` or MimeFoundation.
-SwiftPM still resolves package-level dependencies.
-Consumers of `Emlx` link MimeFoundation and its crypto dependencies.
+It has no dependency on `Emlx` or `MIME`.
+`Emlx` uses the internal `MIME` target, Foundation, and CoreFoundation.
+Envelope has no external runtime dependencies.
 
 ### Is the Mail store format stable?
 
@@ -182,9 +190,10 @@ Message identifiers include the store and home mailbox to detect stale results.
 
 Envelope extracts the Mail store reader from [iMCP](https://github.com/mattt/iMCP).
 Its package structure follows [Madrid](https://github.com/mattt/Madrid).
-[MimeFoundation](https://github.com/migueldeicaza/MimeFoundation)
-provides MIME parsing and remains pinned to revision
-`dcb6746729d20cf00c42ad6453b4637a075f7d0b`.
+The MIME reader is independently implemented from the RFCs listed in
+[its behavior specification](Documentation/MIME.md).
+A separate development harness compares synthetic fixtures with MimeFoundation
+and Python's standard-library email parser.
 
 ## Legal
 

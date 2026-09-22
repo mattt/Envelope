@@ -45,3 +45,6 @@ jobs:
 
       - name: Test
         run: swift test
+
+      - name: MIME sanitizer mutations
+        run: python3 Tools/fuzz.py --count 10000

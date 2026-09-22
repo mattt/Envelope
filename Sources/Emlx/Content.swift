@@ -1,5 +1,5 @@
 import Foundation
-import MimeFoundation
+import MIME
 
 /// The readable content of a local `.emlx` message file.
 public struct Content: Sendable {
@@ -34,33 +34,30 @@ public struct Content: Sendable {
         checkCancellation: () throws -> Void = { try Task.checkCancellation() }
     ) throws {
         try checkCancellation()
+        guard data.count <= 32 * 1_024 * 1_024 else {
+            throw Error.unsupportedMessage("the complete .emlx input exceeds 32 MiB")
+        }
         let payload = try Container(data: data).payload
-        try checkCancellation()
-
-        let message: MimeMessage
+        let message: Part
         do {
-            message = try MimeMessage.load(MemoryStream(Array(payload), writable: false))
-        } catch {
-            throw Error.malformedMessage(error.localizedDescription)
+            message = try Parser.parse(payload, checkCancellation: checkCancellation)
+        } catch let failure as MIME.Failure {
+            switch failure {
+            case .malformed(let reason): throw Error.malformedMessage(reason)
+            case .unsupported(let reason): throw Error.unsupportedMessage(reason)
+            case .limit: throw Error.unsupportedMessage("MIME resource limit exceeded")
+            case .partial: throw Error.partialMessage
+            case .encrypted: throw Error.encryptedMessage
+            }
         }
-        try checkCancellation()
-        guard !message.headers.isEmpty else {
-            throw Error.malformedMessage("no MIME headers")
-        }
-        if let body = message.body {
-            try Self.validate(body, in: payload, checkCancellation: checkCancellation)
-        }
-
-        let plain = message.textBody
-        guard let body = plain ?? message.htmlBody else {
+        guard let selected = Self.select(message) else {
             throw Error.unsupportedMessage("the local body is missing or not text")
         }
-
-        headers = message.headers.map { Header(name: $0.field, value: $0.value) }
-        self.body = body
-        mediaType = plain != nil ? "text/plain" : "text/html"
-        attachments = message.attachments.compactMap { ($0 as? MimePart)?.fileName }
-        messageID = message.messageId
+        headers = message.headers.map { Header(name: $0.name, value: $0.value) }
+        body = selected.0
+        mediaType = selected.1
+        attachments = Self.filenames(message)
+        messageID = message.header("message-id")?.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
         if let expectedMessageID, expectedMessageID.contains("@") {
             let brackets = CharacterSet(charactersIn: "<>")
             guard messageID?.trimmingCharacters(in: brackets) == expectedMessageID.trimmingCharacters(in: brackets) else {
@@ -68,62 +65,6 @@ public struct Content: Sendable {
             }
         }
         try checkCancellation()
-    }
-
-    /// Rejects content that the parser accepts but cannot return as complete text.
-    private static func validate(
-        _ entity: MimeEntity,
-        in payload: Data,
-        depth: Int = 0,
-        checkCancellation: () throws -> Void
-    ) throws {
-        try checkCancellation()
-        guard depth < 64 else {
-            throw Error.unsupportedMessage("MIME nesting is too deep")
-        }
-
-        switch entity.contentType.mimeType.lowercased() {
-        case "multipart/encrypted", "application/pkcs7-mime", "application/x-pkcs7-mime",
-            "application/pgp-encrypted":
-            throw Error.encryptedMessage
-        case "message/partial":
-            throw Error.partialMessage
-        default:
-            break
-        }
-
-        if let text = entity as? TextPart, !text.isAttachment, let content = text.content {
-            // The parser tolerates damaged transfer encodings. Do not report those as complete text.
-            if text.contentTransferEncoding == .base64 {
-                let encoded = MemoryStream()
-                try content.writeTo(encoded)
-                let whitespace = Set(" \t\r\n".utf8)
-                let bytes = encoded.toByteArray().filter { !whitespace.contains($0) }
-                guard Data(base64Encoded: Data(bytes)) != nil else {
-                    throw Error.malformedMessage("invalid base64 body")
-                }
-            }
-            if text.contentType.charset != nil {
-                guard let encoding = text.contentType.charsetEncoding else {
-                    throw Error.unsupportedMessage("unknown character encoding")
-                }
-                let decoded = MemoryStream()
-                try content.decodeTo(decoded)
-                guard String(data: Data(decoded.toByteArray()), encoding: encoding) != nil else {
-                    throw Error.malformedMessage("text does not match its character encoding")
-                }
-            }
-        }
-
-        if let multipart = entity as? Multipart {
-            let ending = Data(("--" + multipart.boundary + "--").utf8)
-            guard !multipart.isEmpty, payload.range(of: ending) != nil else {
-                throw Error.partialMessage
-            }
-            for child in multipart {
-                try validate(child, in: payload, depth: depth + 1, checkCancellation: checkCancellation)
-            }
-        }
     }
 
 }
