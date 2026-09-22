@@ -1,32 +1,21 @@
-// swift-tools-version: 6.4
-// The swift-tools-version declares the minimum version of Swift required to build this package.
+// swift-tools-version: 6.1
 
 import PackageDescription
 
 let package = Package(
     name: "Envelope",
+    platforms: [.macOS("13.0")],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "Envelope",
-            targets: ["Envelope"]
-        ),
+        .library(name: "Mail", targets: ["Mail"]),
+        .library(name: "Emlx", targets: ["Emlx"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/migueldeicaza/MimeFoundation", revision: "dcb6746729d20cf00c42ad6453b4637a075f7d0b")
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
-        .target(
-            name: "Envelope",
-            swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
-        ),
-        .testTarget(
-            name: "EnvelopeTests",
-            dependencies: ["Envelope"],
-            swiftSettings: [
-                .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
-        ),
+        .target(name: "Mail"),
+        .target(name: "Emlx", dependencies: [.product(name: "MimeFoundation", package: "MimeFoundation")]),
+        .testTarget(name: "MailTests", dependencies: ["Mail", "Emlx"]),
+        .testTarget(name: "EmlxTests", dependencies: ["Emlx"]),
     ]
 )

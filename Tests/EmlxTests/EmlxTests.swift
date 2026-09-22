@@ -1,0 +1,124 @@
+import Foundation
+import XCTest
+@testable import Emlx
+
+final class EmlxTests: XCTestCase {
+    private func emlx(_ mime: String) -> Data {
+        let payload = Data(mime.utf8)
+        return Data("\(payload.count)\n".utf8) + payload + Data("\n<plist>ignored trailer</plist>".utf8)
+    }
+
+    func testContainerPreservesPayloadAndTrailingBytes() throws {
+        let payload = Data("Subject: Container\r\n\r\ncafé".utf8)
+        let trailer = Data("\n<plist>trailing bytes</plist>".utf8)
+        let prefix = Data("\(payload.count)   \r\n".utf8)
+        let container = try Emlx.Container(data: prefix + payload + trailer)
+        XCTAssertEqual(container.payload, payload)
+        XCTAssertEqual(container.trailer, trailer)
+        XCTAssertTrue(try Emlx.Container(data: prefix + payload).trailer.isEmpty)
+    }
+
+    func testExpectedMessageIDAndCancellation() throws {
+        let data = emlx("Message-ID: <one@example.com>\nSubject: One\n\nBody")
+        XCTAssertEqual(try Emlx.Content(emlx: data, expectedMessageID: "one@example.com").body, "Body")
+        XCTAssertEqual(try Emlx.Content(emlx: data, expectedMessageID: "123").body, "Body")
+        XCTAssertThrowsError(try Emlx.Content(emlx: data, expectedMessageID: "other@example.com")) { error in
+            XCTAssertEqual(error as? Emlx.Error, .messageMismatch)
+        }
+        XCTAssertThrowsError(try Emlx.Content(emlx: data, checkCancellation: { throw CancellationError() })) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
+    func testPaddedByteCountPreservesMIMEBoundaries() throws {
+        let payload = Data("Subject: Padding\r\nContent-Type: text/plain; charset=utf-8\r\n\r\ncafé".utf8)
+        let count = String(payload.count)
+        let padded = count.padding(toLength: 10, withPad: " ", startingAt: 0)
+        for prefix in [count + "\n", padded + "\n", padded + "\r\n"] {
+            let data = Data(prefix.utf8) + payload + Data("\n<plist>not message content</plist>".utf8)
+            let content = try Emlx.Content(emlx: data)
+            XCTAssertEqual(content.body, "café")
+            XCTAssertEqual(content.headers.first?.value, "Padding")
+        }
+        XCTAssertThrowsError(try Emlx.Content(emlx: Data("999       \n".utf8) + payload)) { error in
+            XCTAssertEqual(error as? Emlx.Error, .partialMessage)
+        }
+    }
+
+    func testInvalidByteCountsRemainRejected() throws {
+        for prefix in ["", "          ", "1 2", "12x", "+12", "-12", "0", "99999999999999999999999"] {
+            XCTAssertThrowsError(try Emlx.Content(emlx: Data((prefix + "\nSubject: Test\n\nBody").utf8))) { error in
+                XCTAssertTrue(error.localizedDescription.contains("byte-count prefix"))
+            }
+        }
+    }
+
+    func testByteCountAndEncodedHeaders() throws {
+        let content = try Emlx.Content(
+            emlx: emlx("Subject: =?utf-8?B?Y2Fmw6k=?=\r\nContent-Type: text/plain; charset=utf-8\r\n\r\ncafé")
+        )
+        XCTAssertEqual(content.body, "café")
+        XCTAssertEqual(content.headers.first?.value, "café")
+        XCTAssertFalse(content.body.contains("plist"))
+        XCTAssertThrowsError(try Emlx.Content(emlx: Data("999\nSubject: x\n\nshort".utf8)))
+        XCTAssertThrowsError(try Emlx.Content(emlx: Data("oops\nhi".utf8)))
+        XCTAssertThrowsError(try Emlx.Content(emlx: emlx("no headers")))
+        XCTAssertThrowsError(
+            try Emlx.Content(
+                emlx: emlx("Subject: Broken\nContent-Type: text/plain\nContent-Transfer-Encoding: base64\n\n%%%")
+            )
+        )
+        XCTAssertThrowsError(
+            try Emlx.Content(emlx: emlx("Subject: Broken\nContent-Type: text/plain; charset=unknown-charset\n\ntext"))
+        )
+        XCTAssertThrowsError(
+            try Emlx.Content(
+                emlx: emlx(
+                    "Subject: Broken\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: base64\n\n/w=="
+                )
+            )
+        )
+    }
+
+    func testMultipartAndCharacterEncoding() throws {
+        let mime = """
+            Subject: MIME
+            Content-Type: multipart/mixed; boundary=outer
+
+            --outer
+            Content-Type: multipart/alternative; boundary=inner
+
+            --inner
+            Content-Type: text/plain; charset=iso-8859-1
+            Content-Transfer-Encoding: quoted-printable
+
+            caf=E9
+            --inner
+            Content-Type: text/html
+
+            <p>HTML</p>
+            --inner--
+            --outer
+            Content-Type: application/octet-stream
+            Content-Disposition: attachment; filename="report.pdf"
+            Content-Transfer-Encoding: base64
+
+            YQ==
+            --outer--
+            """
+        let content = try Emlx.Content(emlx: emlx(mime))
+        XCTAssertEqual(content.mediaType, "text/plain")
+        XCTAssertTrue(content.body.contains("café"))
+        XCTAssertEqual(content.attachments, ["report.pdf"])
+        XCTAssertThrowsError(try Emlx.Content(emlx: emlx(mime.replacingOccurrences(of: "--outer--", with: ""))))
+        let html = try Emlx.Content(
+            emlx: emlx("Subject: HTML\nContent-Type: text/html\n\n<img src=\"https://example.com/x\">")
+        )
+        XCTAssertEqual(html.mediaType, "text/html")
+        XCTAssertTrue(html.body.contains("https://example.com/x"))
+        XCTAssertThrowsError(
+            try Emlx.Content(emlx: emlx("Subject: Secret\nContent-Type: application/pkcs7-mime\n\nencrypted"))
+        )
+    }
+
+}
