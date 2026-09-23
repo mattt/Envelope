@@ -158,6 +158,16 @@ extension MIMETests {
             if delta <= 0 { XCTAssertNoThrow(try parse(source)) } else { XCTAssertThrowsError(try parse(source)) }
         }
     }
+    func testUTF16FollowsByteOrderMarkOrDefaultsToBigEndian() throws {
+        let budget = Budget(Limits(), {})
+        XCTAssertEqual(try budget.string([0xFE, 0xFF, 0x00, 0x62, 0x00, 0x6F], charset: "utf-16"), "bo")
+        XCTAssertEqual(try budget.string([0xFF, 0xFE, 0x62, 0x00, 0x6F, 0x00], charset: "utf-16"), "bo")
+        // RFC 2781 section 4.3: text without a byte order mark is big-endian.
+        XCTAssertEqual(try budget.string([0x00, 0x62, 0x00, 0x6F], charset: "utf-16"), "bo")
+        XCTAssertEqual(try budget.string([0x62, 0x00, 0x6F, 0x00], charset: "utf-16le"), "bo")
+        XCTAssertEqual(try budget.string([0x00, 0x62, 0x00, 0x6F], charset: "utf-16be"), "bo")
+        XCTAssertEqual(try budget.string([0xEF, 0xBB, 0xBF, 0x62], charset: "utf-8"), "b")
+    }
     func testDecodedBudgetUsesUTF8Size() throws {
         for delta in -1 ... 1 {
             var limits = Limits(); limits.decoded = 2 + delta

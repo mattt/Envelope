@@ -14,13 +14,15 @@ extension Budget {
         } else {
             encoding = .utf8
         }
+        // An external representation uses a byte order mark when one is present,
+        // and big-endian order otherwise, as RFC 2781 section 4.3 requires.
         let converted = bytes.withUnsafeBufferPointer {
             CFStringCreateWithBytes(
                 kCFAllocatorDefault,
                 $0.baseAddress,
                 $0.count,
                 CFStringConvertNSStringEncodingToEncoding(encoding.rawValue),
-                false
+                true
             )
         }
         try cancel()
