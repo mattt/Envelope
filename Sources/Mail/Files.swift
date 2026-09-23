@@ -28,6 +28,10 @@ public final class Files: Sendable {
         transform: (Data) throws -> T
     ) throws -> T {
         try cancellation.check()
+        // A row identifier names a different message in another store.
+        guard version.resolvingSymlinksInPath().lastPathComponent == record.store else {
+            throw Error.storeChanged
+        }
         let mailbox = try mailboxDirectory(record.mailboxURL, version: version)
 
         if let cached = cache.withLock({ $0[record.identifier] }) {

@@ -551,6 +551,24 @@ final class MailTests: XCTestCase {
         XCTAssertThrowsError(try files.mailboxDirectory("file:///tmp/Outside.mbox", version: version))
     }
 
+    func testFileReadMapsAccountMailboxesAndRejectsAnotherStore() throws {
+        let account = "11111111-1111-4111-8111-111111111111"
+        try execute("UPDATE mailboxes SET url = 'imap://\(account)/Folder/INBOX' WHERE ROWID = 1")
+        let database = try Mail.Database(root: root)
+        let record = try XCTUnwrap(database.fetch(.init(id: 1)).first)
+        database.close()
+        for store in ["V10", "V11"] {
+            let messages = root.appendingPathComponent("\(store)/\(account)/Folder.mbox/INBOX.mbox/Data/1/Messages")
+            try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true)
+            try emlx("Message-ID: <one@example.com>\nSubject: One\n\n\(store)").write(to: messages.appendingPathComponent("1.emlx"))
+        }
+        let files = Mail.Files()
+        XCTAssertEqual(try files.readContent(record, version: version).body, "V10")
+        XCTAssertThrowsError(try files.readContent(record, version: root.appendingPathComponent("V11"))) { error in
+            XCTAssertEqual(error as? Mail.Error, .storeChanged)
+        }
+    }
+
     func testFileReadsAndMIMEParsingRespectCancellation() throws {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).last)
