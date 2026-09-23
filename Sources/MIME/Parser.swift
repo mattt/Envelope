@@ -75,7 +75,7 @@ private struct Reader {
         }
         let (type, parameters) = try budget.parameters(fields["content-type"] ?? defaultType)
         guard type.split(separator: "/").count == 2 else { throw Failure.malformed("invalid media type") }
-        let (disposition, dispositionParameters) = try budget.parameters(fields["content-disposition"] ?? "inline")
+        let (disposition, dispositionParameters) = try budget.parameters(fields["content-disposition"] ?? "inline", allowsComments: false)
         let (encoding, encodingParameters) = try budget.parameters(fields["content-transfer-encoding"] ?? "7bit")
         guard encodingParameters.isEmpty else { throw Failure.malformed("transfer encoding has parameters") }
         if ["multipart/encrypted", "application/pkcs7-mime", "application/x-pkcs7-mime", "application/pgp-encrypted"].contains(type) {

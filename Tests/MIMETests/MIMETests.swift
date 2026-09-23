@@ -39,8 +39,6 @@ final class MIMETests: XCTestCase {
     func testMalformedInputs() {
         for source in [
             "Content-Type: text/plain\nContent-Type: text/html\n\nx",
-            "Content-Disposition: attachment; filename*1*=utf-8''x\n\nx",
-            "Content-Disposition: attachment; filename*=utf-8''%ZZ\n\nx",
             "Content-Type: text/plain; charset=unknown\n\nx",
             "Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody\ntext--x--",
             "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/mixed; boundary=y\n\n--y\n\nbody\n--x--",
@@ -117,6 +115,27 @@ extension MIMETests {
         let long = String(repeating: "a", count: 80)
         XCTAssertEqual(try parse("Subject: =?utf-8?Q?\(long)?=\n\nBody").headers[0].value, long)
         XCTAssertEqual(try parse("Subject: =?utf-8*en?Q?hi?=\n\nBody").headers[0].value, "hi")
+    }
+    func testParametersTolerateCommonDefects() throws {
+        // Empty parameters, such as one after a final semicolon, are ignored.
+        XCTAssertEqual(try parse("Content-Type: text/plain; charset=utf-8;\n\nBody").parameters, ["charset": "utf-8"])
+        XCTAssertEqual(try parse("Content-Type: text/plain;;\n\nBody").mediaType, "text/plain")
+        // An unquoted value continues to the next semicolon.
+        XCTAssertEqual(try parse("Content-Disposition: attachment; filename=my file.pdf; size=3\n\nx").filename, "my file.pdf")
+        // RFC 2045 section 3: Content-Disposition cannot contain comments.
+        XCTAssertEqual(try parse("Content-Disposition: attachment; filename=report(1).pdf\n\nx").filename, "report(1).pdf")
+        XCTAssertEqual(try parse("Content-Type: text/plain; charset=utf-8; charset=iso-8859-1\n\nBody").parameters["charset"], "utf-8")
+    }
+    func testInvalidExtendedParametersFallBackToPlainValues() throws {
+        for disposition in [
+            "inline; filename=plain; filename*1*=utf-8''gap",
+            "inline; filename=plain; filename*=utf-8''%ZZ",
+            "inline; filename=plain; filename*=unknown''x",
+            "inline; filename=plain; filename*=utf-8''x; filename*0=y",
+        ] {
+            XCTAssertEqual(try parse("Content-Disposition: \(disposition)\n\nBody").filename, "plain", disposition)
+        }
+        XCTAssertNil(try parse("Content-Disposition: inline; filename*1*=utf-8''gap\n\nBody").filename)
     }
     func testAttachmentsAreNotDecoded() throws {
         let part = try parse("Content-Disposition: attachment; filename=x.bin\nContent-Transfer-Encoding: base64\n\nYQ==")

@@ -83,4 +83,9 @@ enum ASCII {
     static func isVisible(_ byte: UInt8) -> Bool {
         (33 ... 126).contains(byte)
     }
+
+    /// Returns whether a byte can appear in an RFC 2045 token.
+    static func isToken(_ byte: UInt8) -> Bool {
+        isVisible(byte) && !#"()<>@,;:\"/[]?="#.utf8.contains(byte)
+    }
 }

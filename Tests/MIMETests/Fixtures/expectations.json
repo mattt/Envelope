@@ -72,7 +72,7 @@
     "provenance": "Independently authored synthetic fixture. No charset guessing"
   },
   "continuation-gap": {
-    "body": null,
+    "body": "body",
     "provenance": "Independently authored synthetic fixture. RFC 2231 §3"
   },
   "encrypted": {
