@@ -58,25 +58,27 @@ let result = try await worker.run { cancellation in
     defer { database.close() }
 
     let mailboxes = try database.mailboxes()
-    let mailbox = mailboxes.first?.id
-    return try database.search(.init(subject: "Invoice", mailbox: mailbox))
+    let mailboxID = mailboxes.first?.id
+    return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
 }
 
 for message in result.records {
-    print(message.identifier, message.subject)
+    print(message.id, message.subject ?? "")
 }
 ```
 
 Filters combine with AND.
-Sender and subject searches use case-insensitive substrings.
+Sender and subject searches match substrings without regard to case.
+A search term with non-ASCII characters uses a slower comparison.
 Dates use the Unix epoch, with an inclusive start and exclusive end.
 Results sort by received date and row identifier, newest first.
 The default limit is 30; the maximum is 100.
 Mailbox filters include label membership when the store has a labels table.
 
-`SearchResult` contains records, the applied request in `filters`, and
-`indexedMessageCount` for the selected mailbox scope before other filters
+`SearchResult` contains the matching records, the request,
+and `indexedMessageCount` for the selected mailbox scope before other filters
 and pagination.
+The records and the count come from one snapshot of the index.
 This count does not describe server contents or account sync status.
 A zero count can mean an empty mailbox or incomplete local indexing.
 
@@ -87,16 +89,16 @@ Pass the indexed Message-ID to `Emlx.Content` to check file identity.
 ```swift
 import Emlx
 
-let files = Mail.Files()
-if let identifier = result.records.first?.identifier {
+let reader = Mail.MessageFileReader()
+if let identifier = result.records.first?.id {
     let content = try await worker.run { cancellation in
         let database = try Mail.Database(root: root, cancellation: cancellation)
         defer { database.close() }
         let record = try database.record(for: identifier)
         database.close()
 
-        return try files.read(record, version: database.versionURL,
-                              cancellation: cancellation) { data in
+        return try reader.read(record, version: database.versionURL,
+                               cancellation: cancellation) { data in
             try Emlx.Content(emlx: data, expectedMessageID: record.messageID,
                              checkCancellation: cancellation.check)
         }
@@ -106,9 +108,12 @@ if let identifier = result.records.first?.identifier {
 ```
 
 `Emlx.Content` returns decoded headers, a plain-text body when available,
-an HTML body otherwise, attachment names, and the MIME Message-ID.
+an HTML body otherwise, attachment filenames, and the MIME Message-ID.
 HTML remains data; Envelope does not load remote content.
-Encrypted, partial, malformed, and unsupported content produces typed errors.
+A damaged part, such as an attachment with invalid parameters,
+does not hide a readable body in another part.
+When no part supplies a readable body,
+encrypted, partial, malformed, and unsupported content produces an `EmlxError`.
 `Emlx.Container` exposes the counted payload and unparsed trailing bytes.
 It does not require a valid trailing property list.
 The complete input to `Emlx.Content`, including trailing bytes, is limited to 32 MiB.
@@ -123,7 +128,7 @@ strict decoding, recovery rules, and verification tooling.
 
 The database opens read-only and requires WAL journal mode.
 Envelope does not copy the database, change its journal mode, or run checkpoints.
-SQLite lock conflicts fail immediately without a retry.
+SQLite lock conflicts fail immediately with `MailError.databaseBusy`, without a retry.
 Each statement has a cooperative 100 ms deadline by default.
 An active read can still delay a WAL checkpoint.
 The deadline cannot interrupt blocked filesystem I/O.
@@ -132,17 +137,20 @@ The deadline cannot interrupt blocked filesystem I/O.
 The default is one open connection per process.
 When callers choose different limits, the smallest limit of the open connections
 and the requested connection applies to admission.
+A connection over the limit fails with `MailError.connectionLimitReached`.
 Use each database on one thread at a time.
 
 `Mail.Worker` runs one blocking operation at a time on a dispatch queue.
-Overlapping calls fail immediately, including during file reads.
+Overlapping calls fail immediately with `MailError.operationInProgress`,
+including during file reads.
 Its cancellation signal reaches synchronous database and file operations.
 Pass `cancellation.check` to `Emlx.Content` to extend that signal through parsing.
 The MIME reader checks cancellation while scanning and decoding,
 and before and after platform charset conversion.
 Filesystem calls and platform conversion can delay cancellation.
 
-File reads check folder containment and accept regular files up to 32 MiB.
+File reads check that the store matches the message,
+check folder containment, and accept regular files up to 32 MiB.
 Cached locations are hints and are checked again on every read.
 The parser closure is responsible for checking MIME identity;
 the usage example checks it whenever the index contains an RFC Message-ID.
@@ -158,11 +166,7 @@ swift format lint --strict --recursive .
 
 If a separately installed Swift toolchain conflicts with the selected Xcode SDK,
 use `xcrun --toolchain XcodeDefault swift` for these commands.
-Conductor Setup resolves package dependencies with Xcode's bundled compiler.
-Conductor Run executes the fixture tests with that compiler.
-Setup requires Xcode 16.3 or later, accepted Xcode license terms,
-and network access for uncached dependencies.
-No Mail folder grant or copied workspace files are needed for the tests.
+The tests use synthetic fixtures and do not need access to the Mail folder.
 
 ## FAQ
 
