@@ -1,8 +1,11 @@
 import Foundation
 import os
 
-/// Runs one blocking Mail operation at a time outside the cooperative executor.
-/// Overlapping requests fail immediately, including while message files are read.
+/// Runs blocking Mail operations one at a time, outside Swift's cooperative thread pool.
+///
+/// The worker does not queue calls.
+/// A call that starts while another operation runs fails immediately,
+/// including while the other operation reads message files.
 public final class Worker: Sendable {
     private let queue = DispatchQueue(label: "me.mattt.Envelope.mail", qos: .utility)
     private let occupied = OSAllocatedUnfairLock(initialState: false)
@@ -10,10 +13,14 @@ public final class Worker: Sendable {
     /// Creates a worker with a private serial dispatch queue.
     public init() {}
 
-    /// Runs blocking work with cooperative cancellation.
-    /// - Parameter operation: Work that checks the supplied cancellation signal.
-    /// - Returns: The operation's result.
-    /// - Throws: `MailError.operationInProgress` on overlap, or the operation's error.
+    /// Runs a blocking operation on the worker's queue.
+    ///
+    /// If the calling task is canceled, the worker cancels the signal that it passes to the operation.
+    /// - Parameter operation: The work to run.
+    ///   Pass its signal to ``Database``, ``MessageFileReader``, and the parser.
+    /// - Returns: The value that `operation` returns.
+    /// - Throws: ``MailError/operationInProgress`` if another operation is running,
+    ///   `CancellationError` if the task is canceled, or the error that `operation` throws.
     public func run<T: Sendable>(
         _ operation: @Sendable @escaping (Cancellation) throws -> T
     ) async throws -> T {

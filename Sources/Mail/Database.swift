@@ -352,6 +352,7 @@ public final class Database {
         return results
     }
 
+    /// Converts a SQLite result code to an error.
     private func checkResult(_ result: Int32, budget: QueryBudget) throws {
         try budget.check()
         switch result & 0xff {
@@ -364,8 +365,9 @@ public final class Database {
         }
     }
 
-    /// A cooperative deadline, including cancellation of the calling task.
-    /// SQLite cannot call the progress handler while blocked in filesystem I/O.
+    /// The time limit and cancellation signal for one statement.
+    ///
+    /// SQLite cannot call the progress handler while it waits for file I/O.
     private final class QueryBudget {
         let deadline: ContinuousClock.Instant
         let cancellation: Cancellation
@@ -405,7 +407,9 @@ extension Database {
         }
     }
 
-    /// The current row of a prepared statement. Accessors return nil for `NULL`.
+    /// The current row of a prepared statement.
+    ///
+    /// The accessors return `nil` for `NULL` values.
     struct Row {
         let statement: OpaquePointer?
 
