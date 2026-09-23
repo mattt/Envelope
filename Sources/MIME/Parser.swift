@@ -58,14 +58,16 @@ private struct Reader {
                 guard let colon = text.firstIndex(of: ":") else { throw Failure.malformed("missing header colon") }
                 let name = String(text[..<colon])
                 guard !name.isEmpty, name.utf8.allSatisfy({ $0 >= 33 && $0 <= 126 && $0 != 58 }) else { throw Failure.malformed("invalid header name") }
-                raw.append((name, String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespaces)))
+                raw.append((name, String(text[text.index(after: colon)...])))
             }
         }
         guard separated, depth != 0 || !raw.isEmpty else { throw Failure.malformed("missing MIME headers or separator") }
         let structural = Set(["content-type", "content-disposition", "content-transfer-encoding", "content-id", "mime-version"])
         var fields: [String: String] = [:]
         var headers: [Header] = []
-        for (name, value) in raw {
+        for (name, folded) in raw {
+            // Trim after unfolding, so a value that starts on a continuation line has no leading space.
+            let value = folded.trimmingCharacters(in: .whitespaces)
             let key = name.lowercased()
             if structural.contains(key) && fields[key] != nil { throw Failure.malformed("duplicate structural header") }
             fields[key] = value

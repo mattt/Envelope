@@ -30,6 +30,13 @@ final class EmlxTests: XCTestCase {
         }
     }
 
+    func testFoldedMessageIDMatchesIndex() throws {
+        let data = emlx("Message-ID:\r\n <one@example.com>\r\nSubject:\r\n\tFolded\r\n\r\nBody")
+        let content = try Emlx.Content(emlx: data, expectedMessageID: "<one@example.com>")
+        XCTAssertEqual(content.messageID, "one@example.com")
+        XCTAssertEqual(content.headers.map(\.value), ["<one@example.com>", "Folded"])
+    }
+
     func testPaddedByteCountPreservesMIMEBoundaries() throws {
         let payload = Data("Subject: Padding\r\nContent-Type: text/plain; charset=utf-8\r\n\r\ncafé".utf8)
         let count = String(payload.count)
