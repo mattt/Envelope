@@ -4,6 +4,9 @@ import os
 
 private let envelopeIndexPath = "MailData/Envelope Index"
 
+/// The name of the SQL function that finds a substring without regard to case.
+let containsFunction = "envelope_contains"
+
 /// A read-only connection to the Envelope Index of the newest Mail store in a folder.
 /// The index is read live, without a copy and with its write-ahead log.
 public final class Database {
@@ -119,6 +122,20 @@ public final class Database {
         }
         // Yield immediately to Mail rather than waiting or retrying.
         sqlite3_busy_timeout(connection, 0)
+        sqlite3_create_function_v2(
+            connection,
+            containsFunction,
+            2,
+            SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+            nil,
+            { context, _, arguments in
+                guard let arguments else { return sqlite3_result_null(context) }
+                sqlite3_result_int(context, containsIgnoringCase(arguments[0], arguments[1]))
+            },
+            nil,
+            nil,
+            nil
+        )
 
         do {
             // Rollback-journal readers can block commits. Refuse that mode;
@@ -347,3 +364,22 @@ extension Database {
 }
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+/// Returns 1 if a text value contains a term without regard to case, and 0 otherwise.
+///
+/// SQLite's `lower()` folds only ASCII letters.
+/// The search uses this function only for a term that has non-ASCII characters.
+private func containsIgnoringCase(_ text: OpaquePointer?, _ term: OpaquePointer?) -> Int32 {
+    guard let textBytes = sqlite3_value_text(text), let termBytes = sqlite3_value_text(term) else { return 0 }
+    let textCount = Int(sqlite3_value_bytes(text))
+    let termCount = Int(sqlite3_value_bytes(term))
+    // A term with non-ASCII letters cannot match text that has only ASCII bytes,
+    // except through rare folds such as the Kelvin sign.
+    // Most indexed subjects and addresses are ASCII, so this check avoids most conversions.
+    guard UnsafeBufferPointer(start: textBytes, count: textCount).contains(where: { $0 >= 0x80 }) else { return 0 }
+    guard
+        let haystack = CFStringCreateWithBytesNoCopy(nil, textBytes, textCount, CFStringBuiltInEncodings.UTF8.rawValue, false, kCFAllocatorNull),
+        let needle = CFStringCreateWithBytesNoCopy(nil, termBytes, termCount, CFStringBuiltInEncodings.UTF8.rawValue, false, kCFAllocatorNull)
+    else { return 0 }
+    return CFStringFind(haystack, needle, .compareCaseInsensitive).location == kCFNotFound ? 0 : 1
+}

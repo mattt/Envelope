@@ -70,6 +70,17 @@ extension Message {
             }
         }
 
+        /// Returns a condition that finds a term in a column without regard to case.
+        ///
+        /// An ASCII term uses SQLite's `lower()`, which is faster than the registered function.
+        /// `instr`, unlike `LIKE`, has no wildcard characters to escape.
+        static func contains(_ column: String, _ term: String) -> String {
+            if term.allSatisfy(\.isASCII) {
+                return "instr(lower(\(column)), lower(?)) > 0"
+            }
+            return "\(containsFunction)(\(column), ?)"
+        }
+
         /// The SQL and its bound values, in placeholder order.
         func statement(matchesLabels: Bool, countOnly: Bool = false) -> (
             sql: String, bindings: [Database.Binding]
@@ -77,13 +88,12 @@ extension Message {
             var conditions: [String] = []
             var bindings: [Database.Binding] = []
 
-            // instr, unlike LIKE, has no wildcard characters to escape.
             if let sender {
-                conditions.append("instr(lower(a.address), lower(?)) > 0")
+                conditions.append(Self.contains("a.address", sender))
                 bindings.append(.text(sender))
             }
             if let subject {
-                conditions.append("instr(lower(s.subject), lower(?)) > 0")
+                conditions.append(Self.contains("s.subject", subject))
                 bindings.append(.text(subject))
             }
             if let mailbox {

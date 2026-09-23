@@ -346,6 +346,22 @@ final class MailTests: XCTestCase {
         XCTAssertTrue(try database.fetch(query).isEmpty)
     }
 
+    func testSubstringSearchIgnoresCaseBeyondASCII() throws {
+        try execute(
+            """
+            INSERT INTO subjects VALUES (3, 'École d''été');
+            INSERT INTO addresses VALUES (3, 'ÉLODIE@example.com');
+            INSERT INTO messages VALUES (4,1,3,3,400,0,'four@example.com');
+            """
+        )
+        let database = try Mail.Database(root: root)
+        XCTAssertEqual(try database.fetch(.init(subject: "école")).map(\.id), [4])
+        XCTAssertEqual(try database.fetch(.init(subject: "D'ÉTÉ")).map(\.id), [4])
+        XCTAssertEqual(try database.fetch(.init(sender: "élodie")).map(\.id), [4])
+        XCTAssertEqual(try database.fetch(.init(subject: "ecole")).map(\.id), [])
+        XCTAssertEqual(try database.fetch(.init(sender: "ALICE")).map(\.id), [2, 1])
+    }
+
     func testReceivedDateAndRangeUseUnixEpoch() throws {
         // Use literal timestamps and independently parsed calendar dates so the
         // fixture cannot hide an epoch change in both decoding and filtering.
