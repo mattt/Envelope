@@ -2,7 +2,8 @@ import CoreFoundation
 import Foundation
 
 extension Budget {
-    func string(_ bytes: [UInt8], charset: String?) throws -> String {
+    /// Converts bytes from a declared charset, or from UTF-8 when no charset is declared.
+    func convert(_ bytes: [UInt8], charset: String?) throws -> String {
         try cancel()
         let encoding: String.Encoding
         if let charset {
@@ -13,7 +14,6 @@ extension Budget {
         } else {
             encoding = .utf8
         }
-        guard bytes.count <= limits.decoded - decoded else { throw Failure.limit }
         let converted = bytes.withUnsafeBufferPointer {
             CFStringCreateWithBytes(
                 kCFAllocatorDefault,
@@ -25,20 +25,16 @@ extension Budget {
         }
         try cancel()
         guard let converted else { throw Failure.malformed("text does not match its character encoding") }
-        var size = 0
-        CFStringGetBytes(
-            converted,
-            CFRange(location: 0, length: CFStringGetLength(converted)),
-            CFStringBuiltInEncodings.UTF8.rawValue,
-            0,
-            false,
-            nil,
-            0,
-            &size
-        )
-        try cancel()
-        try output(size)
         return converted as String
+    }
+
+    /// Converts bytes and charges the UTF-8 size of the result to the decoded-output budget.
+    func string(_ bytes: [UInt8], charset: String?) throws -> String {
+        guard bytes.count <= limits.decoded - decoded else { throw Failure.limit }
+        let text = try convert(bytes, charset: charset)
+        try output(text.utf8.count)
+        try cancel()
+        return text
     }
 
     func transfer(_ bytes: ArraySlice<UInt8>, encoding: String, validateOnly: Bool = false) throws -> [UInt8] {
@@ -112,49 +108,159 @@ extension Budget {
         return output
     }
 
+    /// Decodes the RFC 2047 encoded words in a header value.
+    ///
+    /// Text that is not a well-formed encoded word stays literal,
+    /// as RFC 2047 sections 6.1 and 6.3 require.
     func words(_ value: String) throws -> String {
         let input = Array(value.utf8)
-        var result = ""
-        var previousWord = false
-        var cursor = 0
+        var result: [UInt8] = []
         var literalStart = 0
+        var followsWord = false
+        var cursor = 0
         while cursor + 1 < input.count {
             try tick(cursor)
-            guard input[cursor] == 61 && input[cursor + 1] == 63 else { cursor += 1; continue }
-            let prefix = input[literalStart ..< cursor]
-            var whitespace = true
-            for (index, byte) in prefix.enumerated() {
-                try tick(index)
-                if byte != 32 && byte != 9 { whitespace = false }
+            guard input[cursor] == ASCII.equals, input[cursor + 1] == ASCII.question,
+                let word = try encodedWord(in: input, at: cursor)
+            else {
+                cursor += 1
+                continue
             }
-            if !previousWord || !whitespace {
-                try output(prefix.count)
-                result += String(decoding: prefix, as: UTF8.self)
+            let gap = input[literalStart ..< cursor]
+            // White space between adjacent encoded words is not part of the text.
+            if !followsWord || !gap.allSatisfy(ASCII.isBlank) {
+                result += gap
             }
-            var end = cursor + 2
-            while end + 1 < input.count && !(input[end] == 63 && input[end + 1] == 61) {
-                guard end - cursor < 73 else { throw Failure.malformed("encoded word exceeds 75 bytes") }
-                end += 1
-            }
-            guard end + 1 < input.count, end + 2 - cursor <= 75 else { throw Failure.malformed("incomplete encoded word") }
-            let wordSource = String(decoding: input[(cursor + 2) ..< end], as: UTF8.self)
-            let fields = wordSource.split(separator: "?", omittingEmptySubsequences: false)
-            guard fields.count == 3 else { throw Failure.malformed("invalid encoded word") }
-            let mode = fields[1].lowercased()
-            guard mode == "b" || mode == "q" else { throw Failure.malformed("invalid encoded word encoding") }
-            let source = mode == "q" ? fields[2].replacingOccurrences(of: "_", with: "=20") : String(fields[2])
-            let bytes = try transfer(Array(source.utf8)[...], encoding: mode == "b" ? "base64" : "quoted-printable")
-            result += try string(bytes, charset: String(fields[0]))
-            cursor = end + 2
-            literalStart = cursor
-            previousWord = true
+            result += word.text.utf8
+            cursor = word.end
+            literalStart = word.end
+            followsWord = true
         }
-        let rest = input[literalStart...]
-        try output(rest.count)
-        result += String(decoding: rest, as: UTF8.self)
-        return result
+        result += input[literalStart...]
+        try output(result.count)
+        return String(decoding: result, as: UTF8.self)
+    }
+
+    /// Decodes the encoded word that starts at an offset.
+    /// - Returns: The text and the offset after the word,
+    ///   or `nil` if the bytes do not form a word that can be decoded.
+    private func encodedWord(in input: [UInt8], at start: Int) throws -> (text: String, end: Int)? {
+        // The syntax is =?charset?encoding?encoded-text?=, without white space.
+        var index = start + 2
+        func field() -> ArraySlice<UInt8>? {
+            let fieldStart = index
+            while index < input.count, input[index] != ASCII.question {
+                guard ASCII.isVisible(input[index]) else { return nil }
+                index += 1
+            }
+            guard index < input.count else { return nil }
+            defer { index += 1 }
+            return input[fieldStart ..< index]
+        }
+        guard let charset = field(), !charset.isEmpty,
+            let encoding = field(), encoding.count == 1,
+            let text = field(), index < input.count, input[index] == ASCII.equals
+        else { return nil }
+
+        let bytes: [UInt8]?
+        switch encoding[encoding.startIndex] | 0x20 {
+        case UInt8(ascii: "b"): bytes = try base64(text, strict: true)
+        case UInt8(ascii: "q"): bytes = qEncoding(text)
+        default: return nil
+        }
+        guard let bytes else { return nil }
+        // RFC 2231 section 5 permits a language suffix after the charset.
+        let name = String(decoding: charset.prefix { $0 != ASCII.asterisk }, as: UTF8.self)
+        do {
+            return (try convert(bytes, charset: name), index + 1)
+        } catch is Failure {
+            // RFC 2047 section 6.2 permits showing a word in an unknown charset as it appears.
+            return nil
+        }
+    }
+
+    /// Decodes RFC 2047 "Q" text, or returns `nil` for an invalid escape.
+    private func qEncoding(_ text: ArraySlice<UInt8>) -> [UInt8]? {
+        var bytes: [UInt8] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            switch text[index] {
+            case ASCII.underscore:
+                bytes.append(ASCII.space)
+                index += 1
+            case ASCII.equals:
+                guard index + 2 < text.endIndex, let high = hex(text[index + 1]), let low = hex(text[index + 2]) else {
+                    return nil
+                }
+                bytes.append(high << 4 | low)
+                index += 3
+            case let byte:
+                bytes.append(byte)
+                index += 1
+            }
+        }
+        return bytes
+    }
+
+    /// Decodes base64 text.
+    ///
+    /// Lenient decoding skips bytes outside the alphabet, as RFC 2045 section 6.8 requires,
+    /// and decodes a final group that has no padding.
+    /// Strict decoding returns `nil` for those bytes and for a group of one character.
+    func base64(_ text: ArraySlice<UInt8>, strict: Bool) throws -> [UInt8]? {
+        var output: [UInt8] = []
+        var group: UInt32 = 0
+        var count = 0
+        func append(_ byte: UInt32) throws {
+            guard output.count < limits.decoded - decoded else { throw Failure.limit }
+            output.append(UInt8(truncatingIfNeeded: byte))
+        }
+        // Padding or the end of the text completes a group of two or three characters.
+        func finishGroup() throws -> Bool {
+            switch count {
+            case 2: try append(group >> 4)
+            case 3:
+                try append(group >> 10)
+                try append(group >> 2)
+            case 1: if strict { return false }
+            default: break
+            }
+            group = 0
+            count = 0
+            return true
+        }
+        for (offset, byte) in text.enumerated() {
+            try tick(offset)
+            let value = base64Values[Int(byte)]
+            if value < 64 {
+                group = group << 6 | UInt32(value)
+                count += 1
+                if count == 4 {
+                    try append(group >> 16)
+                    try append(group >> 8)
+                    try append(group)
+                    group = 0
+                    count = 0
+                }
+            } else if byte == ASCII.equals {
+                guard try finishGroup() else { return nil }
+            } else if strict {
+                return nil
+            }
+        }
+        guard try finishGroup() else { return nil }
+        return output
     }
 }
+
+/// The value of each base64 alphabet byte, or 255 for other bytes.
+private let base64Values: [UInt8] = {
+    var values = [UInt8](repeating: 255, count: 256)
+    for (value, byte) in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8.enumerated() {
+        values[Int(byte)] = UInt8(value)
+    }
+    return values
+}()
 
 func hex(_ byte: UInt8) -> UInt8? {
     switch byte {

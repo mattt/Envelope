@@ -105,6 +105,23 @@ extension MIMETests {
         XCTAssertEqual(try parse("Subject: =?us-ascii?Q?hello_?=\n\nBody").headers[0].value, "hello ")
         XCTAssertEqual(try parse("Content-Transfer-Encoding: quoted-printable\n\nline \t\r\nnext").text, "line\r\nnext")
     }
+    func testTextThatIsNotAnEncodedWordStaysLiteral() throws {
+        // RFC 2047 section 6.1: other character sequences are ordinary text.
+        XCTAssertEqual(try parse("Subject: Is a=?b true\n\nBody").headers[0].value, "Is a=?b true")
+        XCTAssertEqual(try parse("Subject: =?utf-8?Q?a b?=\n\nBody").headers[0].value, "=?utf-8?Q?a b?=")
+    }
+    func testIncorrectlyFormedEncodedWordsDoNotStopTheMessage() throws {
+        // RFC 2047 section 6.3: a reader must not reject a message for an incorrectly formed word.
+        for word in ["=?utf-8?B?%%?=", "=?utf-8?Q?bad=ZZ?=", "=?unknown?Q?x?=", "=?us-ascii?Q?=E9?="] {
+            XCTAssertEqual(try parse("Subject: \(word) tail\n\nBody").headers[0].value, "\(word) tail", word)
+        }
+        XCTAssertEqual(try parse("Subject: =?utf-8?Q?a?= =?bad?Q?b?=\n\nBody").headers[0].value, "a =?bad?Q?b?=")
+    }
+    func testLongEncodedWordsAndLanguageSuffixesDecode() throws {
+        let long = String(repeating: "a", count: 80)
+        XCTAssertEqual(try parse("Subject: =?utf-8?Q?\(long)?=\n\nBody").headers[0].value, long)
+        XCTAssertEqual(try parse("Subject: =?utf-8*en?Q?hi?=\n\nBody").headers[0].value, "hi")
+    }
     func testBinarySyntaxWithoutDecodedAllocation() throws {
         let part = try parse("Content-Disposition: attachment; filename=x.bin\nContent-Transfer-Encoding: base64\n\nYQ==")
         XCTAssertNil(part.text)
