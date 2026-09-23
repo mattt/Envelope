@@ -588,6 +588,38 @@ final class MailTests: XCTestCase {
         }
     }
 
+    func testFileLookupReportsPartialDuplicateAndOversizedFiles() throws {
+        let database = try Mail.Database(root: root)
+        let record = try XCTUnwrap(database.fetch(.init(rowID: 1)).first)
+        database.close()
+        let messages = mailbox.appendingPathComponent("Data/1/Messages")
+        try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true)
+
+        try emlx("Subject: Partial\n\nPart").write(to: messages.appendingPathComponent("1.partial.emlx"))
+        XCTAssertThrowsError(try Mail.MessageFileReader().readContent(record, version: version)) { error in
+            XCTAssertEqual(error as? MailError, .partialMessage)
+        }
+        // A complete file takes precedence over a partial one.
+        let file = messages.appendingPathComponent("1.emlx")
+        try emlx("Message-ID: <one@example.com>\n\nComplete").write(to: file)
+        XCTAssertEqual(try Mail.MessageFileReader().readContent(record, version: version).body, "Complete")
+
+        let copies = mailbox.appendingPathComponent("Data/2/Messages")
+        try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: true)
+        try emlx("Message-ID: <one@example.com>\n\nCopy").write(to: copies.appendingPathComponent("1.emlx"))
+        XCTAssertThrowsError(try Mail.MessageFileReader().readContent(record, version: version)) { error in
+            XCTAssertEqual(error as? MailError, .messageFileNotFound)
+        }
+        try FileManager.default.removeItem(at: copies)
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: 32 * 1_024 * 1_024 + 1)
+        try handle.close()
+        XCTAssertThrowsError(try Mail.MessageFileReader().readContent(record, version: version)) { error in
+            XCTAssertEqual(error as? MailError, .messageFileTooLarge)
+        }
+    }
+
     func testFileReadsAndMIMEParsingRespectCancellation() throws {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).last)

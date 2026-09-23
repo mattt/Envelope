@@ -131,7 +131,8 @@ public final class MessageFileReader: Sendable {
 
         try cancellation.check()
         guard candidates.count == 1, let url = candidates.first else {
-            throw isPartial ? MailError.partialMessage : MailError.messageFileNotFound
+            // A partial file explains a missing complete file, but not duplicate files.
+            throw candidates.isEmpty && isPartial ? MailError.partialMessage : MailError.messageFileNotFound
         }
         return url
     }
