@@ -88,6 +88,30 @@ final class EmlxTests: XCTestCase {
         )
     }
 
+    func testDamagedPartsDoNotHideTheBody() throws {
+        for damaged in [
+            "--x\nContent-Type: text/plain\nContent-Type: text/html\n\nduplicate\n",
+            "--x\nContent-Type: application/pkcs7-mime; name=a.p7m\nContent-Disposition: attachment; filename=a.p7m\n\nYQ==\n",
+            "--x\nContent-Type: multipart/encrypted; boundary=y\n\n--y\n\nsecret\n--y--\n",
+            "--x\nContent-Type: message/partial\n\npiece\n",
+            "--x\nContent-Type: multipart/mixed; boundary=y\n\n--y\n\nnested\n",
+            "--x\nContent-Type: text/plain; charset=unknown\n\nlater\n",
+            "--x\n",
+        ] {
+            let mime = "Content-Type: multipart/mixed; boundary=x\n\n--x\n\nreadable\n" + damaged + "--x--"
+            XCTAssertEqual(try Emlx.Content(emlx: emlx(mime)).body, "readable", damaged)
+        }
+    }
+
+    func testHeaderDefectsOutsideTheStructureAreTolerated() throws {
+        var payload = Data("Subject: caf".utf8)
+        payload.append(0xE9)
+        payload.append(Data("\nMIME-Version: 1.0\nMIME-Version: 1.0\n\nbody".utf8))
+        let content = try Emlx.Content(emlx: Data("\(payload.count)\n".utf8) + payload)
+        XCTAssertEqual(content.headers.first?.value, "caf\u{FFFD}")
+        XCTAssertEqual(content.body, "body")
+    }
+
     func testMultipartAndCharacterEncoding() throws {
         let mime = """
             Subject: MIME

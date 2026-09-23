@@ -1,55 +1,114 @@
 import Foundation
 
+/// Resource limits for one parse.
+///
+/// All nested entities share the limits.
 package struct Limits: Sendable {
+    /// The maximum nesting depth below the root entity, which has depth zero.
     package var depth = 64
+    /// The maximum number of entities, including the root.
     package var entities = 1_024
+    /// The maximum number of header bytes in one entity, including the line that ends the header block.
     package var entityHeaders = 256 * 1_024
+    /// The maximum number of header bytes in all entities.
     package var totalHeaders = 1_024 * 1_024
+    /// The maximum UTF-8 size of decoded header values, parameter values, and text bodies.
     package var decoded = 64 * 1_024 * 1_024
+
+    /// Creates the default limits.
     package init() {}
 }
 
-package enum Failure: Error {
+/// A reason that the parser cannot read an entity.
+package enum Failure: Error, Equatable {
+    /// The entity does not follow the MIME syntax.
     case malformed(String)
+    /// The entity uses a charset or transfer encoding that the parser does not support.
     case unsupported(String)
+    /// The message exceeds a resource limit.
     case limit
+    /// The entity is one fragment of a message.
     case partial
+    /// The entity is encrypted.
     case encrypted
 }
 
+/// A header field with its decoded value.
 package struct Header: Sendable {
+    /// The field name, as it appears in the message.
     package let name: String
+    /// The unfolded value, with RFC 2047 encoded words decoded.
     package let value: String
 }
 
+/// A MIME entity and its nested entities.
 package struct Part: Sendable {
+    /// The header fields, in source order.
     package let headers: [Header]
+    /// The lowercased media type, such as `text/plain`.
     package let mediaType: String
+    /// The Content-Type parameters, by lowercased name.
     package let parameters: [String: String]
-    package let attachment: Bool
+    /// A Boolean value that indicates whether the Content-Disposition is `attachment`.
+    package let isAttachment: Bool
+    /// The filename from the Content-Disposition, or the name from the Content-Type.
     package let filename: String?
+    /// The byte offsets of the body in the parsed data.
+    ///
+    /// Offsets start at zero at the first byte of the data,
+    /// even when the data is a slice with other indices.
     package let bodyRange: Range<Int>
+    /// The decoded text of a text entity that is not an attachment.
     package let text: String?
+    /// The body parts of a multipart entity, or the message of a `message/rfc822` entity.
     package let children: [Part]
+    /// The reason that the parser could not read this entity, if any.
+    package let failure: Failure?
+
+    /// Returns the value of the first header field with a name.
+    /// - Parameter name: A lowercased field name.
     package func header(_ name: String) -> String? {
         headers.first { $0.name.lowercased() == name }?.value
     }
 }
 
+extension Part {
+    /// Creates a placeholder for a nested entity that the parser could not read.
+    init(failure: Failure, bodyRange: Range<Int>) {
+        self.init(
+            headers: [],
+            mediaType: "application/octet-stream",
+            parameters: [:],
+            isAttachment: false,
+            filename: nil,
+            bodyRange: bodyRange,
+            text: nil,
+            children: [],
+            failure: failure
+        )
+    }
+}
+
+/// Tracks the resources that one parse uses, and checks for cancellation.
 final class Budget {
     let limits: Limits
     let cancel: () throws -> Void
     var entities = 0
     var headers = 0
     var decoded = 0
+
     init(_ limits: Limits, _ cancel: @escaping () throws -> Void) {
         self.limits = limits
         self.cancel = cancel
     }
+
+    /// Charges decoded bytes to the budget.
     func output(_ count: Int) throws {
         guard count <= limits.decoded - decoded else { throw Failure.limit }
         decoded += count
     }
+
+    /// Checks for cancellation at every 16 KiB of a scan.
     func tick(_ offset: Int) throws {
         if offset % 16_384 == 0 { try cancel() }
     }

@@ -42,15 +42,12 @@ public struct Content: Sendable {
         do {
             message = try Parser.parse(payload, checkCancellation: checkCancellation)
         } catch let failure as MIME.Failure {
-            switch failure {
-            case .malformed(let reason): throw Error.malformedMessage(reason)
-            case .unsupported(let reason): throw Error.unsupportedMessage(reason)
-            case .limit: throw Error.unsupportedMessage("MIME resource limit exceeded")
-            case .partial: throw Error.partialMessage
-            case .encrypted: throw Error.encryptedMessage
-            }
+            throw Self.error(for: failure)
         }
         guard let selected = Self.select(message) else {
+            if let failure = Self.failure(in: message) {
+                throw Self.error(for: failure)
+            }
             throw Error.unsupportedMessage("the local body is missing or not text")
         }
         headers = message.headers.map { Header(name: $0.name, value: $0.value) }
@@ -67,4 +64,14 @@ public struct Content: Sendable {
         try checkCancellation()
     }
 
+    /// Returns the public error for a parser failure.
+    private static func error(for failure: MIME.Failure) -> Error {
+        switch failure {
+        case .malformed(let reason): return .malformedMessage(reason)
+        case .unsupported(let reason): return .unsupportedMessage(reason)
+        case .limit: return .unsupportedMessage("MIME resource limit exceeded")
+        case .partial: return .partialMessage
+        case .encrypted: return .encryptedMessage
+        }
+    }
 }

@@ -14,14 +14,14 @@ final class MIMETests: XCTestCase {
             try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("expectations.json"))) as! [String: [String: Any]]
         for (name, expected) in expectations {
             let data = try Data(contentsOf: directory.appendingPathComponent(name + ".mime"))
+            let container = Data("\(data.count)\n".utf8) + data
             guard let body = expected["body"] as? String else {
-                XCTAssertThrowsError(try Parser.parse(data), name)
+                XCTAssertThrowsError(try Content(emlx: container), name)
                 continue
             }
             let part = try Parser.parse(data)
             func texts(_ part: Part) -> [String] { (part.text.map { [$0] } ?? []) + part.children.flatMap(texts) }
             XCTAssertTrue(texts(part).contains(body), name)
-            let container = Data("\(data.count)\n".utf8) + data
             XCTAssertEqual(try Content(emlx: container).body, body, name)
         }
     }
@@ -36,16 +36,27 @@ final class MIMETests: XCTestCase {
         XCTAssertEqual(try parse("Content-Disposition: attachment; filename=\"a\\\"b.txt\"\n\nbinary").filename, "a\"b.txt")
     }
 
-    func testMalformedInputs() {
+    func testMalformedStructureThrows() {
         for source in [
             "Content-Type: text/plain\nContent-Type: text/html\n\nx",
-            "Content-Type: text/plain; charset=unknown\n\nx",
             "Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody\ntext--x--",
-            "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/mixed; boundary=y\n\n--y\n\nbody\n--x--",
-            "Content-Type: message/partial\n\nx",
-            "Content-Type: application/pkcs7-mime\n\nx",
+            "Content-Type: multipart/mixed\n\n--x--",
+            "Subject: x\nno colon\n\nx",
         ] { XCTAssertThrowsError(try parse(source), source) }
-        XCTAssertThrowsError(try Parser.parse(Data("Subject: x\n\n".utf8) + Data([255])))
+    }
+
+    func testBodyFailuresAreRecordedOnTheirParts() throws {
+        XCTAssertEqual(try parse("Content-Type: text/plain; charset=unknown\n\nx").failure, .unsupported("unknown character encoding"))
+        XCTAssertEqual(try parse("Content-Type: message/partial\n\nx").failure, .partial)
+        XCTAssertEqual(try parse("Content-Type: application/pkcs7-mime\n\nx").failure, .encrypted)
+        XCTAssertNil(try parse("Content-Type: application/pkcs7-mime; smime-type=signed-data\n\nx").failure)
+        XCTAssertNil(try parse("Content-Type: application/pkcs7-mime\nContent-Disposition: attachment\n\nx").failure)
+        let invalid = try Parser.parse(Data("Subject: x\n\n".utf8) + Data([255]))
+        XCTAssertEqual(invalid.failure, .malformed("text does not match its character encoding"))
+        let nested = try parse(
+            "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/mixed; boundary=y\n\n--y\n\nbody\n--x--"
+        )
+        XCTAssertEqual(nested.children.first?.failure, .malformed("missing closing multipart delimiter"))
     }
 
     func testRangesAndSlices() throws {

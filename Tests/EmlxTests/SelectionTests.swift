@@ -60,7 +60,14 @@ extension SelectionTests {
         for (source, expected) in [
             ("Content-Type: message/partial\n\nx", Emlx.Error.partialMessage),
             ("Content-Type: application/pkcs7-mime\n\nx", Emlx.Error.encryptedMessage),
-            ("Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody", Emlx.Error.partialMessage),
+            ("Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody", Emlx.Error.malformedMessage("missing closing multipart delimiter")),
+            ("Content-Type: multipart/mixed; boundary=x\n\n--x--", Emlx.Error.malformedMessage("multipart has no body parts")),
+            (
+                "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/encrypted; boundary=y\n\n--y\n\nx\n--y--\n--x--",
+                Emlx.Error.encryptedMessage
+            ),
+            ("Content-Type: application/pkcs7-mime; smime-type=signed-data\n\nx", Emlx.Error.unsupportedMessage("the local body is missing or not text")),
+            ("Content-Type: text/plain; charset=unknown\n\nx", Emlx.Error.unsupportedMessage("unknown character encoding")),
         ] {
             let data = Data("\(source.utf8.count)\n\(source)".utf8)
             XCTAssertThrowsError(try Content(emlx: data)) { XCTAssertEqual($0 as? Emlx.Error, expected) }
