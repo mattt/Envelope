@@ -41,10 +41,6 @@ final class MIMETests: XCTestCase {
             "Content-Type: text/plain\nContent-Type: text/html\n\nx",
             "Content-Disposition: attachment; filename*1*=utf-8''x\n\nx",
             "Content-Disposition: attachment; filename*=utf-8''%ZZ\n\nx",
-            "Content-Transfer-Encoding: base64\n\nYR==",
-            "Content-Transfer-Encoding: base64\n\nYQ=",
-            "Content-Transfer-Encoding: quoted-printable\n\nx=GG",
-            "Content-Transfer-Encoding: quoted-printable\n\nx=",
             "Content-Type: text/plain; charset=unknown\n\nx",
             "Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody\ntext--x--",
             "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/mixed; boundary=y\n\n--y\n\nbody\n--x--",
@@ -122,10 +118,24 @@ extension MIMETests {
         XCTAssertEqual(try parse("Subject: =?utf-8?Q?\(long)?=\n\nBody").headers[0].value, long)
         XCTAssertEqual(try parse("Subject: =?utf-8*en?Q?hi?=\n\nBody").headers[0].value, "hi")
     }
-    func testBinarySyntaxWithoutDecodedAllocation() throws {
+    func testAttachmentsAreNotDecoded() throws {
         let part = try parse("Content-Disposition: attachment; filename=x.bin\nContent-Transfer-Encoding: base64\n\nYQ==")
         XCTAssertNil(part.text)
-        XCTAssertThrowsError(try parse("Content-Disposition: attachment\nContent-Transfer-Encoding: base64\n\n%%%"))
+        XCTAssertNil(try parse("Content-Disposition: attachment\nContent-Transfer-Encoding: x-uuencode\n\n%%%").text)
+    }
+    func testBase64SkipsBytesOutsideTheAlphabet() throws {
+        // RFC 2045 section 6.8: bytes outside the alphabet are ignored.
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: base64\n\nY%W\nJj\n").text, "abc")
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: base64\n\nYWJjZA").text, "abcd")
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: base64\n\nYQ=").text, "a")
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: base64\n\nYR==").text, "a")
+    }
+    func testQuotedPrintableKeepsInvalidEscapesAndRawBytes() throws {
+        // RFC 2045 section 6.7, note 2: keep "=" when no valid escape follows.
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: quoted-printable\n\nx=GG").text, "x=GG")
+        XCTAssertEqual(try parse("Content-Transfer-Encoding: quoted-printable\n\nsoft= \nbreak=").text, "softbreak")
+        let raw = "Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: quoted-printable\n\ncaf\u{E9}=C3=A9"
+        XCTAssertEqual(try parse(raw).text, "caf\u{E9}\u{E9}")
     }
     func testSharedNestedBudget() throws {
         let source = "Content-Type: message/rfc822\n\nX: y\n\nz"

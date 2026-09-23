@@ -39,73 +39,83 @@ extension Budget {
         return text
     }
 
-    func transfer(_ bytes: ArraySlice<UInt8>, encoding: String, validateOnly: Bool = false) throws -> [UInt8] {
+    /// Decodes a body that uses a content transfer encoding.
+    func transfer(_ bytes: ArraySlice<UInt8>, encoding: String) throws -> [UInt8] {
+        switch encoding {
+        case "7bit", "8bit", "binary":
+            try cancel()
+            guard bytes.count <= limits.decoded - decoded else { throw Failure.limit }
+            return Array(bytes)
+        case "base64":
+            // Lenient decoding does not return nil.
+            return try base64(bytes, strict: false) ?? []
+        case "quoted-printable":
+            return try quotedPrintable(bytes)
+        default:
+            throw Failure.unsupported("unknown transfer encoding")
+        }
+    }
+
+    /// Decodes quoted-printable text.
+    ///
+    /// The decoder follows the guidance for robust implementations in RFC 2045 section 6.7.
+    /// It keeps an "=" that does not start an escape,
+    /// and it keeps bytes that the encoding does not permit.
+    private func quotedPrintable(_ bytes: ArraySlice<UInt8>) throws -> [UInt8] {
         var output: [UInt8] = []
         func append(_ byte: UInt8) throws {
-            if validateOnly { return }
             guard output.count < limits.decoded - decoded else { throw Failure.limit }
             output.append(byte)
         }
-        switch encoding {
-        case "7bit", "8bit", "binary":
-            for (i, byte) in bytes.enumerated() { try tick(i); try append(byte) }
-        case "base64":
-            var quartet: [UInt8] = []
-            var ended = false
-            let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8)
-            for (i, byte) in bytes.enumerated() {
-                try tick(i)
-                if [9, 10, 13, 32].contains(byte) { continue }
-                guard !ended, byte == 61 || alphabet.contains(byte) else { throw Failure.malformed("invalid base64") }
-                quartet.append(byte)
-                if quartet.count == 4 {
-                    guard let a = alphabet.firstIndex(of: quartet[0]), let b = alphabet.firstIndex(of: quartet[1]) else {
-                        throw Failure.malformed("invalid base64 padding")
-                    }
-                    let c = alphabet.firstIndex(of: quartet[2])
-                    let d = alphabet.firstIndex(of: quartet[3])
-                    if quartet[2] == 61 {
-                        guard quartet[3] == 61, b & 15 == 0 else { throw Failure.malformed("invalid base64 padding") }
-                    } else if quartet[3] == 61 {
-                        guard let c, c & 3 == 0 else { throw Failure.malformed("invalid base64 padding") }
-                    }
-                    try append(UInt8((a << 2) | (b >> 4)))
-                    if let c { try append(UInt8(((b & 15) << 4) | (c >> 2))) }
-                    if let c, let d { try append(UInt8(((c & 3) << 6) | d)) }
-                    ended = quartet[3] == 61
-                    quartet.removeAll(keepingCapacity: true)
-                }
+        // Returns the offset after a line break, or nil if no line break starts at the offset.
+        func lineBreak(at index: Int) -> Int? {
+            if index < bytes.endIndex, bytes[index] == ASCII.lineFeed { return index + 1 }
+            if index + 1 < bytes.endIndex, bytes[index] == ASCII.carriageReturn, bytes[index + 1] == ASCII.lineFeed {
+                return index + 2
             }
-            guard quartet.isEmpty else { throw Failure.malformed("incomplete base64") }
-        case "quoted-printable":
-            var i = bytes.startIndex
-            while i < bytes.endIndex {
-                try tick(i - bytes.startIndex)
-                let b = bytes[i]
-                if b == 61 {
-                    guard i + 1 < bytes.endIndex else { throw Failure.malformed("incomplete quoted-printable") }
-                    if bytes[i + 1] == 10 { i += 2; continue }
-                    if i + 2 < bytes.endIndex, bytes[i + 1] == 13, bytes[i + 2] == 10 { i += 3; continue }
-                    guard i + 2 < bytes.endIndex, let a = hex(bytes[i + 1]), let b = hex(bytes[i + 2]) else {
-                        throw Failure.malformed("invalid quoted-printable")
-                    }
-                    try append(a * 16 + b)
-                    i += 3
+            return nil
+        }
+        // Returns the offset after a run of spaces and tabs.
+        func blankEnd(from index: Int) throws -> Int {
+            var end = index
+            while end < bytes.endIndex, ASCII.isBlank(bytes[end]) {
+                try tick(end - bytes.startIndex)
+                end += 1
+            }
+            return end
+        }
+        var index = bytes.startIndex
+        while index < bytes.endIndex {
+            try tick(index - bytes.startIndex)
+            let byte = bytes[index]
+            if ASCII.isBlank(byte) {
+                // Rule 3 removes white space at the end of an encoded line.
+                let end = try blankEnd(from: index)
+                if end == bytes.endIndex || lineBreak(at: end) != nil {
+                    index = end
                 } else {
-                    guard b == 9 || b == 10 || b == 13 || (32 ... 126).contains(b) else { throw Failure.malformed("invalid quoted-printable byte") }
-                    if b == 13 { guard i + 1 < bytes.endIndex, bytes[i + 1] == 10 else { throw Failure.malformed("bare carriage return") } }
-                    // RFC 2045 requires removal of unencoded trailing whitespace.
-                    if b == 9 || b == 32 {
-                        var end = i
-                        while end < bytes.endIndex && [9, 32].contains(bytes[end]) { try tick(end - bytes.startIndex); end += 1 }
-                        if end == bytes.endIndex || [10, 13].contains(bytes[end]) { i = end; continue }
-                        while i < end { try tick(i - bytes.startIndex); try append(bytes[i]); i += 1 }
-                    } else {
-                        try append(b); i += 1
-                    }
+                    try bytes[index ..< end].forEach(append)
+                    index = end
                 }
+            } else if byte == ASCII.equals {
+                // Rule 5 makes "=" at the end of a line a soft line break.
+                // Transport can add white space between the "=" and the line break.
+                let end = try blankEnd(from: index + 1)
+                if end == bytes.endIndex {
+                    index = end
+                } else if let next = lineBreak(at: end) {
+                    index = next
+                } else if index + 2 < bytes.endIndex, let high = hex(bytes[index + 1]), let low = hex(bytes[index + 2]) {
+                    try append(high << 4 | low)
+                    index += 3
+                } else {
+                    try append(byte)
+                    index += 1
+                }
+            } else {
+                try append(byte)
+                index += 1
             }
-        default: throw Failure.unsupported("unknown transfer encoding")
         }
         return output
     }

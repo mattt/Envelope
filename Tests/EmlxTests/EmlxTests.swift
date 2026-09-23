@@ -70,10 +70,11 @@ final class EmlxTests: XCTestCase {
         XCTAssertThrowsError(try Emlx.Content(emlx: Data("999\nSubject: x\n\nshort".utf8)))
         XCTAssertThrowsError(try Emlx.Content(emlx: Data("oops\nhi".utf8)))
         XCTAssertThrowsError(try Emlx.Content(emlx: emlx("no headers")))
-        XCTAssertThrowsError(
+        XCTAssertEqual(
             try Emlx.Content(
-                emlx: emlx("Subject: Broken\nContent-Type: text/plain\nContent-Transfer-Encoding: base64\n\n%%%")
-            )
+                emlx: emlx("Subject: Lenient\nContent-Type: text/plain\nContent-Transfer-Encoding: base64\n\n%%%")
+            ).body,
+            ""
         )
         XCTAssertThrowsError(
             try Emlx.Content(emlx: emlx("Subject: Broken\nContent-Type: text/plain; charset=unknown-charset\n\ntext"))

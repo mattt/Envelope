@@ -123,8 +123,6 @@ private struct Reader {
         } else if type.hasPrefix("text/") && disposition != "attachment" {
             let decoded = try budget.transfer(bytes[bodyRange], encoding: encoding)
             text = try budget.string(decoded, charset: parameters["charset"])
-        } else {
-            _ = try budget.transfer(bytes[bodyRange], encoding: encoding, validateOnly: true)
         }
         return Part(
             headers: headers,

@@ -60,11 +60,11 @@
     "provenance": "Independently authored synthetic fixture. Ambiguous structural fields rejected"
   },
   "bad-base64": {
-    "body": null,
+    "body": "a",
     "provenance": "Independently authored synthetic fixture. RFC 2045 §6.8"
   },
   "bad-qp": {
-    "body": null,
+    "body": "body=ZZ",
     "provenance": "Independently authored synthetic fixture. RFC 2045 §6.7"
   },
   "unknown-charset": {
