@@ -10,8 +10,6 @@ public enum ValidationError: LocalizedError, Equatable {
     case invalidDateRange
     /// The mailbox identifier is not a positive decimal integer.
     case invalidMailboxIdentifier
-    /// The selected mailbox is absent from the local index.
-    case mailboxNotFound
 
     public var errorDescription: String? {
         switch self {
@@ -23,8 +21,6 @@ public enum ValidationError: LocalizedError, Equatable {
             return "The start date must be before the end date."
         case .invalidMailboxIdentifier:
             return "The mailbox identifier must be a positive decimal integer."
-        case .mailboxNotFound:
-            return "The mailbox does not exist in the local index."
         }
     }
 }

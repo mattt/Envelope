@@ -30,7 +30,7 @@ public final class Files: Sendable {
         try cancellation.check()
         // A row identifier names a different message in another store.
         guard version.resolvingSymlinksInPath().lastPathComponent == record.store else {
-            throw Error.storeChanged
+            throw MailError.storeChanged
         }
         let mailbox = try mailboxDirectory(record.mailboxURL, version: version)
 
@@ -58,10 +58,10 @@ public final class Files: Sendable {
     ///   - value: The storage URL recorded by Mail.
     ///   - version: The version directory returned by the database.
     /// - Returns: The resolved mailbox directory.
-    /// - Throws: `Error.unsupportedMailbox` or `Error.notContained`.
+    /// - Throws: `MailError.unsupportedMailbox` or `MailError.notContained`.
     public func mailboxDirectory(_ value: String, version: URL) throws -> URL {
         guard let url = URL(string: value) else {
-            throw Error.unsupportedMailbox
+            throw MailError.unsupportedMailbox
         }
 
         let directory: URL
@@ -70,18 +70,18 @@ public final class Files: Sendable {
         } else if let host = url.host, UUID(uuidString: host) != nil {
             // Modern stores use the account UUID as the mailbox URL host.
             directory = try url.path.split(separator: "/").reduce(version.appendingPathComponent(host)) {
-                guard $1 != ".", $1 != ".." else { throw Error.unsupportedMailbox }
+                guard $1 != ".", $1 != ".." else { throw MailError.unsupportedMailbox }
                 return $0.appendingPathComponent("\($1).mbox")
             }
         } else {
-            throw Error.unsupportedMailbox
+            throw MailError.unsupportedMailbox
         }
 
         guard directory.pathExtension == "mbox" else {
-            throw Error.unsupportedMailbox
+            throw MailError.unsupportedMailbox
         }
         guard directory.isContained(in: version) else {
-            throw Error.notContained("The mailbox")
+            throw MailError.notContained(directory)
         }
         return directory.resolvingSymlinksInPath()
     }
@@ -96,7 +96,7 @@ public final class Files: Sendable {
                 options: [.skipsHiddenFiles]
             )
         else {
-            throw Error.messageFileNotFound
+            throw MailError.messageFileNotFound
         }
 
         var candidates: [URL] = []
@@ -122,7 +122,7 @@ public final class Files: Sendable {
 
         try cancellation.check()
         guard candidates.count == 1, let url = candidates.first else {
-            throw isPartial ? Error.partialMessage : Error.messageFileNotFound
+            throw isPartial ? MailError.partialMessage : MailError.messageFileNotFound
         }
         return url
     }
@@ -137,11 +137,14 @@ public final class Files: Sendable {
     ) throws -> T {
         try cancellation.check()
         guard url.isContained(in: mailbox), url.isContained(in: version) else {
-            throw Error.notContained("The message file")
+            throw MailError.notContained(url)
         }
         let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        guard values.isRegularFile == true, let size = values.fileSize, size <= maximumMessageSize else {
-            throw Error.messageFileTooLarge
+        guard values.isRegularFile == true else {
+            throw MailError.messageFileNotRegular
+        }
+        guard let size = values.fileSize, size <= maximumMessageSize else {
+            throw MailError.messageFileTooLarge
         }
 
         try cancellation.check()

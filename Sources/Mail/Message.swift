@@ -67,7 +67,7 @@ public struct Message: Sendable {
         guard let id = row.integer(0), let mailbox = row.integer(1),
             let date = row.double(5), date.isFinite
         else {
-            throw Error.unsupportedSchema
+            throw MailError.unsupportedSchema
         }
 
         self.id = id

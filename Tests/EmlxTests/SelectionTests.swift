@@ -51,26 +51,26 @@ extension SelectionTests {
                 XCTAssertEqual(try Content(emlx: input).body, "body")
             } else {
                 XCTAssertThrowsError(try Content(emlx: input)) {
-                    guard case Emlx.Error.unsupportedMessage = $0 else { return XCTFail("Expected input limit error") }
+                    guard case EmlxError.unsupportedMessage = $0 else { return XCTFail("Expected input limit error") }
                 }
             }
         }
     }
     func testIntegrationErrorCategories() throws {
         for (source, expected) in [
-            ("Content-Type: message/partial\n\nx", Emlx.Error.partialMessage),
-            ("Content-Type: application/pkcs7-mime\n\nx", Emlx.Error.encryptedMessage),
-            ("Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody", Emlx.Error.malformedMessage("missing closing multipart delimiter")),
-            ("Content-Type: multipart/mixed; boundary=x\n\n--x--", Emlx.Error.malformedMessage("multipart has no body parts")),
+            ("Content-Type: message/partial\n\nx", EmlxError.partialMessage),
+            ("Content-Type: application/pkcs7-mime\n\nx", EmlxError.encryptedMessage),
+            ("Content-Type: multipart/mixed; boundary=x\n\n--x\n\nbody", EmlxError.malformedMessage("missing closing multipart delimiter")),
+            ("Content-Type: multipart/mixed; boundary=x\n\n--x--", EmlxError.malformedMessage("multipart has no body parts")),
             (
                 "Content-Type: multipart/mixed; boundary=x\n\n--x\nContent-Type: multipart/encrypted; boundary=y\n\n--y\n\nx\n--y--\n--x--",
-                Emlx.Error.encryptedMessage
+                EmlxError.encryptedMessage
             ),
-            ("Content-Type: application/pkcs7-mime; smime-type=signed-data\n\nx", Emlx.Error.unsupportedMessage("the local body is missing or not text")),
-            ("Content-Type: text/plain; charset=unknown\n\nx", Emlx.Error.unsupportedMessage("unknown character encoding")),
+            ("Content-Type: application/pkcs7-mime; smime-type=signed-data\n\nx", EmlxError.unsupportedMessage("the local body is missing or not text")),
+            ("Content-Type: text/plain; charset=unknown\n\nx", EmlxError.unsupportedMessage("unknown character encoding")),
         ] {
             let data = Data("\(source.utf8.count)\n\(source)".utf8)
-            XCTAssertThrowsError(try Content(emlx: data)) { XCTAssertEqual($0 as? Emlx.Error, expected) }
+            XCTAssertThrowsError(try Content(emlx: data)) { XCTAssertEqual($0 as? EmlxError, expected) }
         }
     }
 }

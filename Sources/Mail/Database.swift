@@ -62,7 +62,7 @@ public final class Database {
         do {
             entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
         } catch {
-            throw Error.indexNotReadable
+            throw MailError.indexNotReadable
         }
 
         let versions: [(number: Int, url: URL)] = entries.compactMap { url in
@@ -73,16 +73,16 @@ public final class Database {
             return (number, url)
         }
         guard let version = versions.max(by: { $0.number < $1.number })?.url else {
-            throw Error.indexNotFound
+            throw MailError.indexNotFound
         }
 
         let versionURL = version.resolvingSymlinksInPath()
         guard versionURL.isContained(in: root) else {
-            throw Error.notContained("The Mail store")
+            throw MailError.notContained(versionURL)
         }
         let databaseURL = version.appendingPathComponent(envelopeIndexPath).resolvingSymlinksInPath()
         guard databaseURL.isContained(in: versionURL) else {
-            throw Error.notContained("The Mail index")
+            throw MailError.notContained(databaseURL)
         }
         return (versionURL, databaseURL)
     }
@@ -113,12 +113,12 @@ public final class Database {
             occupied[admissionID] = configuration.maximumConnections
             return true
         }
-        guard hasAdmission else { throw Error.databaseBusy }
+        guard hasAdmission else { throw MailError.connectionLimitReached }
 
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE
         guard sqlite3_open_v2(location.index.path, &connection, flags, nil) == SQLITE_OK else {
             close()
-            throw Error.indexNotReadable
+            throw MailError.indexNotReadable
         }
         // Yield immediately to Mail rather than waiting or retrying.
         sqlite3_busy_timeout(connection, 0)
@@ -140,22 +140,30 @@ public final class Database {
         do {
             // Rollback-journal readers can block commits. Refuse that mode;
             // never change the owner's journal settings or bypass its locks.
-            guard try query("PRAGMA journal_mode", transform: { $0.text(0) }).first == "wal" else {
-                throw Error.unsupportedJournalMode
+            // The first statement reads the file, so its failure means the index is not readable.
+            let journalMode: String?
+            do {
+                journalMode = try query("PRAGMA journal_mode", transform: { $0.text(0) }).first ?? nil
+            } catch MailError.queryFailed {
+                throw MailError.indexNotReadable
             }
-            for (table, columns) in [
-                "messages": ["ROWID", "mailbox", "subject", "sender", "date_received", "read", "message_id"],
-                "mailboxes": ["ROWID", "url"],
-                "subjects": ["ROWID", "subject"],
-                "addresses": ["ROWID", "address"],
-            ] {
-                try query("SELECT \(columns.joined(separator: ", ")) FROM \(table) LIMIT 0") { _ in }
+            guard journalMode == "wal" else {
+                throw MailError.unsupportedJournalMode
+            }
+            do {
+                for (table, columns) in [
+                    "messages": ["ROWID", "mailbox", "subject", "sender", "date_received", "read", "message_id"],
+                    "mailboxes": ["ROWID", "url"],
+                    "subjects": ["ROWID", "subject"],
+                    "addresses": ["ROWID", "address"],
+                ] {
+                    try query("SELECT \(columns.joined(separator: ", ")) FROM \(table) LIMIT 0") { _ in }
+                }
+            } catch MailError.queryFailed {
+                throw MailError.unsupportedSchema
             }
         } catch {
             close()
-            if case Error.queryFailed = error {
-                throw Error.unsupportedSchema
-            }
             throw error
         }
     }
@@ -208,7 +216,7 @@ public final class Database {
         if let mailbox = request.mailbox {
             let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailbox)]) { _ in true }
             guard !exists.isEmpty else {
-                throw ValidationError.mailboxNotFound
+                throw MailError.mailboxNotFound
             }
         }
         let (sql, bindings) = request.statement(matchesLabels: try hasLabels)
@@ -218,16 +226,16 @@ public final class Database {
     /// Returns the indexed message that an identifier from an earlier fetch refers to.
     /// - Parameter identifier: The store, home mailbox, and message identifiers.
     /// - Returns: The current indexed message.
-    /// - Throws: `Error.storeChanged`, `Error.messageNotFound`,
+    /// - Throws: `MailError.storeChanged`, `MailError.messageNotFound`,
     ///   or a database or cancellation error.
     public func record(for identifier: Message.Identifier) throws -> Message {
         guard identifier.store == versionURL.lastPathComponent else {
-            throw Error.storeChanged
+            throw MailError.storeChanged
         }
         guard let record = try fetch(.init(id: identifier.message)).first,
             record.mailbox == identifier.mailbox
         else {
-            throw Error.messageNotFound
+            throw MailError.messageNotFound
         }
         return record
     }
@@ -266,7 +274,7 @@ public final class Database {
         _ bindings: [Binding] = [],
         transform: (Row) throws -> T
     ) throws -> [T] {
-        guard let connection else { throw Error.indexNotReadable }
+        guard let connection else { throw MailError.connectionClosed }
         let budget = QueryBudget(timeLimit: queryTimeLimit, cancellation: cancellation)
         try budget.check()
         sqlite3_progress_handler(
@@ -310,9 +318,9 @@ public final class Database {
         case SQLITE_OK, SQLITE_DONE:
             return
         case SQLITE_BUSY, SQLITE_LOCKED:
-            throw Error.databaseBusy
+            throw MailError.databaseBusy
         default:
-            throw Error.queryFailed(String(cString: sqlite3_errmsg(connection)))
+            throw MailError.queryFailed(String(cString: sqlite3_errmsg(connection)))
         }
     }
 
@@ -333,7 +341,7 @@ public final class Database {
 
         func check() throws {
             try cancellation.check()
-            guard ContinuousClock.now < deadline else { throw Error.queryTimedOut }
+            guard ContinuousClock.now < deadline else { throw MailError.queryTimedOut }
         }
     }
 }

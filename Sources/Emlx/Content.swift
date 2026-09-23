@@ -35,7 +35,7 @@ public struct Content: Sendable {
     ) throws {
         try checkCancellation()
         guard data.count <= 32 * 1_024 * 1_024 else {
-            throw Error.unsupportedMessage("the complete .emlx input exceeds 32 MiB")
+            throw EmlxError.unsupportedMessage("the complete .emlx input exceeds 32 MiB")
         }
         let payload = try Container(data: data).payload
         let message: Part
@@ -48,7 +48,7 @@ public struct Content: Sendable {
             if let failure = Self.failure(in: message) {
                 throw Self.error(for: failure)
             }
-            throw Error.unsupportedMessage("the local body is missing or not text")
+            throw EmlxError.unsupportedMessage("the local body is missing or not text")
         }
         headers = message.headers.map { Header(name: $0.name, value: $0.value) }
         body = selected.0
@@ -58,14 +58,14 @@ public struct Content: Sendable {
         if let expectedMessageID, expectedMessageID.contains("@") {
             let brackets = CharacterSet(charactersIn: "<>")
             guard messageID?.trimmingCharacters(in: brackets) == expectedMessageID.trimmingCharacters(in: brackets) else {
-                throw Error.messageMismatch
+                throw EmlxError.messageMismatch
             }
         }
         try checkCancellation()
     }
 
     /// Returns the public error for a parser failure.
-    private static func error(for failure: MIME.Failure) -> Error {
+    private static func error(for failure: MIME.Failure) -> EmlxError {
         switch failure {
         case .malformed(let reason): return .malformedMessage(reason)
         case .unsupported(let reason): return .unsupportedMessage(reason)

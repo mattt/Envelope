@@ -29,7 +29,7 @@ public struct Mailbox: Sendable {
 
     init(_ row: Database.Row, version: URL, accounts: [String: Account]) throws {
         guard let id = row.integer(0) else {
-            throw Error.unsupportedSchema
+            throw MailError.unsupportedSchema
         }
         self.id = id
         self.url = row.text(1) ?? ""

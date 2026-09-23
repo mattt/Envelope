@@ -13,7 +13,7 @@ public final class Worker: Sendable {
     /// Runs blocking work with cooperative cancellation.
     /// - Parameter operation: Work that checks the supplied cancellation signal.
     /// - Returns: The operation's result.
-    /// - Throws: `Error.databaseBusy` on overlap, or the operation's error.
+    /// - Throws: `MailError.operationInProgress` on overlap, or the operation's error.
     public func run<T: Sendable>(
         _ operation: @Sendable @escaping (Cancellation) throws -> T
     ) async throws -> T {
@@ -23,7 +23,7 @@ public final class Worker: Sendable {
             occupied = true
             return true
         }
-        guard admitted else { throw Error.databaseBusy }
+        guard admitted else { throw MailError.operationInProgress }
 
         let cancellation = Cancellation()
         return try await withTaskCancellationHandler {

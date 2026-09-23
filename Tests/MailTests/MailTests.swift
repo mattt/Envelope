@@ -44,7 +44,7 @@ final class MailTests: XCTestCase {
 
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(writer, sql, nil, nil, nil) == SQLITE_OK else {
-            throw Mail.Error.queryFailed(String(cString: sqlite3_errmsg(writer)))
+            throw MailError.queryFailed(String(cString: sqlite3_errmsg(writer)))
         }
     }
 
@@ -62,10 +62,10 @@ final class MailTests: XCTestCase {
         let first = try Mail.Database(root: root, configuration: configuration)
         let second = try Mail.Database(root: root, configuration: configuration)
         XCTAssertThrowsError(try Mail.Database(root: root, configuration: configuration)) { error in
-            XCTAssertEqual(error as? Mail.Error, .databaseBusy)
+            XCTAssertEqual(error as? MailError, .connectionLimitReached)
         }
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
-            XCTAssertEqual(error as? Mail.Error, .databaseBusy)
+            XCTAssertEqual(error as? MailError, .connectionLimitReached)
         }
         first.close()
         first.close()
@@ -145,7 +145,7 @@ final class MailTests: XCTestCase {
                 """
             ) { $0.integer(0) }
         ) { error in
-            XCTAssertEqual(error as? Mail.Error, .queryTimedOut)
+            XCTAssertEqual(error as? MailError, .queryTimedOut)
         }
         XCTAssertLessThan(start.duration(to: .now), .seconds(2))
         XCTAssertEqual(checkpoint(), SQLITE_OK)
@@ -157,10 +157,10 @@ final class MailTests: XCTestCase {
         let database = try Mail.Database(root: root)
         XCTAssertThrowsError(
             try database.query("SELECT ROWID FROM messages") { _ -> Int in
-                throw Mail.Error.messageMismatch
+                throw CocoaError(.featureUnsupported)
             }
         ) { error in
-            XCTAssertEqual(error as? Mail.Error, .messageMismatch)
+            XCTAssertEqual(error as? CocoaError, CocoaError(.featureUnsupported))
         }
         XCTAssertEqual(checkpoint(), SQLITE_OK)
     }
@@ -187,14 +187,14 @@ final class MailTests: XCTestCase {
     func testRejectsOverlappingConnectionsAndAllowsReopen() throws {
         let database = try Mail.Database(root: root)
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
-            XCTAssertEqual(error as? Mail.Error, .databaseBusy)
+            XCTAssertEqual(error as? MailError, .connectionLimitReached)
         }
         database.close()
         database.close()
         let reopened = try Mail.Database(root: root)
         XCTAssertEqual(try reopened.fetch(.init()).count, 3)
         XCTAssertThrowsError(try database.fetch(.init())) { error in
-            XCTAssertEqual(error as? Mail.Error, .indexNotReadable)
+            XCTAssertEqual(error as? MailError, .connectionClosed)
         }
     }
 
@@ -210,7 +210,7 @@ final class MailTests: XCTestCase {
                 XCTAssertFalse(Thread.isMainThread)
                 entered.fulfill()
                 guard release.wait(timeout: .now() + 5) == .success else {
-                    throw Mail.Error.queryTimedOut
+                    throw MailError.queryTimedOut
                 }
                 return 1
             }
@@ -220,7 +220,7 @@ final class MailTests: XCTestCase {
             _ = try await worker.run { _ in 2 }
             XCTFail("Expected the overlapping operation to be rejected")
         } catch {
-            XCTAssertEqual(error as? Mail.Error, .databaseBusy)
+            XCTAssertEqual(error as? MailError, .operationInProgress)
         }
 
         task.cancel()
@@ -296,17 +296,40 @@ final class MailTests: XCTestCase {
         defer { try? execute("ROLLBACK; PRAGMA locking_mode=NORMAL;") }
         let start = ContinuousClock.now
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
-            XCTAssertEqual(error as? Mail.Error, .databaseBusy)
+            XCTAssertEqual(error as? MailError, .databaseBusy)
         }
         XCTAssertLessThan(start.duration(to: .now), .milliseconds(500))
         try execute("ROLLBACK; PRAGMA locking_mode=NORMAL; SELECT * FROM messages;")
         XCTAssertEqual(try Mail.Database(root: root).fetch(.init()).count, 3)
     }
 
+    func testUnreadableIndexIsNotReportedAsSchemaError() throws {
+        sqlite3_close(writer)
+        writer = nil
+        let index = version.appendingPathComponent("MailData/Envelope Index")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: index.path + suffix)
+        }
+        try Data(repeating: 0x41, count: 8_192).write(to: index)
+        XCTAssertThrowsError(try Mail.Database(root: root)) { error in
+            XCTAssertEqual(error as? MailError, .indexNotReadable)
+        }
+        XCTAssertEqual(try Mail.Database.location(in: root).index.lastPathComponent, "Envelope Index")
+    }
+
+    func testMessageFileMustBeRegularFile() throws {
+        let database = try Mail.Database(root: root)
+        let record = try XCTUnwrap(database.fetch(.init()).last)
+        try FileManager.default.createDirectory(at: mailbox.appendingPathComponent("1.emlx"), withIntermediateDirectories: true)
+        XCTAssertThrowsError(try Mail.Files().readContent(record, version: version)) { error in
+            XCTAssertEqual(error as? MailError, .messageFileNotRegular)
+        }
+    }
+
     func testRejectsRollbackJournalWithoutChangingIt() throws {
         try execute("PRAGMA journal_mode=DELETE;")
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
-            XCTAssertEqual(error as? Mail.Error, .unsupportedJournalMode)
+            XCTAssertEqual(error as? MailError, .unsupportedJournalMode)
         }
         var statement: OpaquePointer?
         XCTAssertEqual(sqlite3_prepare_v2(writer, "PRAGMA journal_mode", -1, &statement, nil), SQLITE_OK)
@@ -434,13 +457,13 @@ final class MailTests: XCTestCase {
         let request = Mail.Message.FetchRequest(mailbox: try Mail.Mailbox.parseIdentifier(identifier))
         XCTAssertEqual(try database.fetch(request).map(\.id), [3, 2, 1])
         XCTAssertThrowsError(try Mail.Mailbox.parseIdentifier(listed.url)) { error in
-            XCTAssertEqual(error as? Mail.ValidationError, .invalidMailboxIdentifier)
+            XCTAssertEqual(error as? ValidationError, .invalidMailboxIdentifier)
         }
         for invalid in ["", "0", "-1", "+1", " 1", "1.0", "INBOX", "9223372036854775808"] {
             XCTAssertThrowsError(try Mail.Mailbox.parseIdentifier(invalid), invalid)
         }
         XCTAssertThrowsError(try database.search(.init(mailbox: 999))) { error in
-            XCTAssertTrue(error.localizedDescription.contains("does not exist"))
+            XCTAssertEqual(error as? MailError, .mailboxNotFound)
         }
     }
 
@@ -525,7 +548,7 @@ final class MailTests: XCTestCase {
         XCTAssertEqual(try Mail.Database(root: root).versionURL.lastPathComponent, "V10")
         try execute("DROP TABLE subjects")
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
-            XCTAssertEqual(error as? Mail.Error, .unsupportedSchema)
+            XCTAssertEqual(error as? MailError, .unsupportedSchema)
         }
     }
 
@@ -548,7 +571,9 @@ final class MailTests: XCTestCase {
         XCTAssertThrowsError(try files.readContent(record, version: version))
         try FileManager.default.createSymbolicLink(at: url, withDestinationURL: other.appendingPathComponent("1.emlx"))
         XCTAssertThrowsError(try files.readContent(record, version: version))
-        XCTAssertThrowsError(try files.mailboxDirectory("file:///tmp/Outside.mbox", version: version))
+        XCTAssertThrowsError(try files.mailboxDirectory("file:///tmp/Outside.mbox", version: version)) { error in
+            XCTAssertEqual(error as? MailError, .notContained(URL(string: "file:///tmp/Outside.mbox")!))
+        }
     }
 
     func testFileReadMapsAccountMailboxesAndRejectsAnotherStore() throws {
@@ -565,7 +590,7 @@ final class MailTests: XCTestCase {
         let files = Mail.Files()
         XCTAssertEqual(try files.readContent(record, version: version).body, "V10")
         XCTAssertThrowsError(try files.readContent(record, version: root.appendingPathComponent("V11"))) { error in
-            XCTAssertEqual(error as? Mail.Error, .storeChanged)
+            XCTAssertEqual(error as? MailError, .storeChanged)
         }
     }
 
@@ -603,11 +628,11 @@ final class MailTests: XCTestCase {
             XCTAssertNil(Mail.Message.Identifier(invalid), invalid)
         }
         XCTAssertThrowsError(try database.record(for: .init(store: "V9", mailbox: 1, message: 3))) { error in
-            XCTAssertEqual(error as? Mail.Error, .storeChanged)
+            XCTAssertEqual(error as? MailError, .storeChanged)
         }
         // A label gives mailbox membership in search, but the identifier names the home mailbox.
         XCTAssertThrowsError(try database.record(for: .init(store: "V10", mailbox: 1, message: 2))) { error in
-            XCTAssertEqual(error as? Mail.Error, .messageNotFound)
+            XCTAssertEqual(error as? MailError, .messageNotFound)
         }
     }
 

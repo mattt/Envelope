@@ -23,7 +23,7 @@ final class EmlxTests: XCTestCase {
         XCTAssertEqual(try Emlx.Content(emlx: data, expectedMessageID: "one@example.com").body, "Body")
         XCTAssertEqual(try Emlx.Content(emlx: data, expectedMessageID: "123").body, "Body")
         XCTAssertThrowsError(try Emlx.Content(emlx: data, expectedMessageID: "other@example.com")) { error in
-            XCTAssertEqual(error as? Emlx.Error, .messageMismatch)
+            XCTAssertEqual(error as? EmlxError, .messageMismatch)
         }
         XCTAssertThrowsError(try Emlx.Content(emlx: data, checkCancellation: { throw CancellationError() })) { error in
             XCTAssertTrue(error is CancellationError)
@@ -48,7 +48,7 @@ final class EmlxTests: XCTestCase {
             XCTAssertEqual(content.headers.first?.value, "Padding")
         }
         XCTAssertThrowsError(try Emlx.Content(emlx: Data("999       \n".utf8) + payload)) { error in
-            XCTAssertEqual(error as? Emlx.Error, .partialMessage)
+            XCTAssertEqual(error as? EmlxError, .partialMessage)
         }
     }
 
