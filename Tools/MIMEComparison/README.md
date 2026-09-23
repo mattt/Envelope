@@ -19,6 +19,6 @@ The comparison programs report independent parser output.
 See `Documentation/MIME.md` for the decisions for each known difference.
 Neither agreement nor majority vote determines correctness.
 The fuzz runner uses a fixed seed, AddressSanitizer, and a subprocess timeout.
-It saves the current synthetic mutation in `.context/mime-fuzz-current.mime`.
+It saves the current synthetic mutation in `.build-asan/mime-fuzz-current.mime`.
 A failure retains that file and copies it to the regression corpus.
 A successful run removes it.
