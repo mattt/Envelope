@@ -5,7 +5,7 @@ import XCTest
 
 final class SelectionTests: XCTestCase {
     private func body(_ source: String) throws -> String? {
-        Content.select(try Parser.parse(Data(source.utf8)))?.0
+        Content.select(try Parser.parse(Data(source.utf8)))?.body
     }
     private func multipart(_ subtype: String, _ parts: [String], parameters: String = "") -> String {
         "Content-Type: multipart/\(subtype); boundary=x\(parameters)\n\npreamble\n" + parts.map { "--x\n" + $0 + "\n" }.joined() + "--x--\nepilogue"

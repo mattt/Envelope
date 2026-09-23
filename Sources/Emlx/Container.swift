@@ -1,15 +1,19 @@
 import Foundation
 
-/// The MIME payload and trailing property-list bytes of an `.emlx` file.
-public struct Container: Sendable {
-    /// The MIME bytes counted by the first line.
+/// The parts of an `.emlx` file: a MIME message and the bytes that follow it.
+///
+/// An `.emlx` file starts with a line that holds the byte count of the message.
+/// Mail stores a property list after the message.
+public struct Container: Sendable, Hashable {
+    /// The MIME message, which has the length from the first line.
     public let payload: Data
-    /// The remaining bytes, preserved without parsing the property list.
+    /// The bytes after the message, without parsing.
     public let trailer: Data
 
-    /// Splits an `.emlx` file at its byte-count boundary.
+    /// Separates an `.emlx` file into its message and the bytes that follow it.
     /// - Parameter data: The complete file, including its byte-count line.
-    /// - Throws: `EmlxError.malformedMessage` or `EmlxError.partialMessage`.
+    /// - Throws: ``EmlxError/malformedMessage(_:)`` if the byte count or message header is invalid,
+    ///   or ``EmlxError/partialMessage`` if the file is shorter than its byte count.
     public init(data: Data) throws {
         // Mail pads the byte count with spaces. The MIME payload still starts after
         // the original newline, not after the trimmed count.
@@ -36,5 +40,4 @@ public struct Container: Sendable {
         self.payload = payload
         trailer = data.subdata(in: (start + length) ..< data.endIndex)
     }
-
 }

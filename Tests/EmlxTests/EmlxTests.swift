@@ -141,7 +141,8 @@ final class EmlxTests: XCTestCase {
         let content = try Emlx.Content(emlx: emlx(mime))
         XCTAssertEqual(content.mediaType, "text/plain")
         XCTAssertTrue(content.body.contains("café"))
-        XCTAssertEqual(content.attachments, ["report.pdf"])
+        XCTAssertEqual(content.attachmentFilenames, ["report.pdf"])
+        XCTAssertEqual(try Emlx.Content(emlx: emlx(mime)), content)
         XCTAssertThrowsError(try Emlx.Content(emlx: emlx(mime.replacingOccurrences(of: "--outer--", with: ""))))
         let html = try Emlx.Content(
             emlx: emlx("Subject: HTML\nContent-Type: text/html\n\n<img src=\"https://example.com/x\">")

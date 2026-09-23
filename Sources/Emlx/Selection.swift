@@ -2,7 +2,7 @@ import MIME
 
 extension Content {
     /// Selects the body text and its media type.
-    static func select(_ part: Part) -> (String, String)? {
+    static func select(_ part: Part) -> (body: String, mediaType: String)? {
         guard !part.isAttachment, part.failure == nil else { return nil }
         if let text = part.text, ["text/plain", "text/html"].contains(part.mediaType) {
             return (text, part.mediaType)
@@ -18,7 +18,7 @@ extension Content {
         }
         if part.mediaType == "multipart/alternative" {
             let candidates = part.children.compactMap(select)
-            return candidates.last { $0.1 == "text/plain" } ?? candidates.last { $0.1 == "text/html" }
+            return candidates.last { $0.mediaType == "text/plain" } ?? candidates.last { $0.mediaType == "text/html" }
         }
         if part.mediaType == "multipart/signed" {
             return part.children.first.flatMap(select)
