@@ -153,5 +153,4 @@ final class EmlxTests: XCTestCase {
             try Emlx.Content(emlx: emlx("Subject: Secret\nContent-Type: application/pkcs7-mime\n\nencrypted"))
         )
     }
-
 }

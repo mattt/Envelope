@@ -661,7 +661,6 @@ final class MailTests: XCTestCase {
             XCTAssertEqual(error as? MailError, .messageNotFound)
         }
     }
-
 }
 
 private extension Mail.MessageFileReader {
