@@ -189,12 +189,14 @@ public final class Database {
     /// - Returns: The matching records, scope count, and applied request.
     /// - Throws: A validation, database, or cancellation error.
     public func search(_ request: Message.FetchRequest) throws -> SearchResult {
-        let records = try fetch(request)
-        // Count the selected local scope without the search filters or pagination.
-        let scope = Message.FetchRequest(mailbox: request.mailbox)
-        let (sql, bindings) = scope.statement(matchesLabels: try hasLabels, countOnly: true)
-        let count = try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0
-        return SearchResult(records: records, indexedMessageCount: count, filters: request)
+        try readTransaction {
+            let records = try fetch(request)
+            // Count the selected local scope without the search filters or pagination.
+            let scope = Message.FetchRequest(mailbox: request.mailbox)
+            let (sql, bindings) = scope.statement(matchesLabels: try hasLabels, countOnly: true)
+            let count = try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0
+            return SearchResult(records: records, indexedMessageCount: count, filters: request)
+        }
     }
 
     /// Returns messages that match a metadata request.
@@ -241,6 +243,20 @@ public final class Database {
             try query("SELECT message_id, mailbox_id FROM labels LIMIT 0") { _ in }
             return true
         }
+    }
+
+    /// Runs statements in one read transaction, so that they read the same snapshot.
+    ///
+    /// The transaction ends even if the time limit has passed or the work is canceled,
+    /// because an open read transaction delays WAL checkpoints.
+    func readTransaction<T>(_ body: () throws -> T) throws -> T {
+        try query("BEGIN") { _ in }
+        defer {
+            if let connection, sqlite3_get_autocommit(connection) == 0 {
+                sqlite3_exec(connection, "ROLLBACK", nil, nil, nil)
+            }
+        }
+        return try body()
     }
 
     /// Runs a statement and transforms each row of its result.

@@ -346,6 +346,24 @@ final class MailTests: XCTestCase {
         XCTAssertTrue(try database.fetch(query).isEmpty)
     }
 
+    func testReadTransactionUsesOneSnapshotAndReleasesIt() throws {
+        let database = try Mail.Database(root: root)
+        let counts = try database.readTransaction {
+            let before = try database.query("SELECT count(*) FROM messages") { $0.integer(0) }
+            try execute("INSERT INTO messages VALUES(4,1,1,1,400,0,'four@example.com')")
+            let after = try database.query("SELECT count(*) FROM messages") { $0.integer(0) }
+            return (before, after)
+        }
+        XCTAssertEqual(counts.0, [3])
+        XCTAssertEqual(counts.1, [3])
+        XCTAssertEqual(checkpoint(), SQLITE_OK)
+
+        XCTAssertThrowsError(try database.readTransaction { try database.query("SELECT missing FROM messages") { _ in } })
+        XCTAssertEqual(checkpoint(), SQLITE_OK)
+        XCTAssertEqual(try database.search(.init()).indexedMessageCount, 4)
+        XCTAssertEqual(checkpoint(), SQLITE_OK)
+    }
+
     func testSubstringSearchIgnoresCaseBeyondASCII() throws {
         try execute(
             """
