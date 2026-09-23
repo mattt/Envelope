@@ -1,66 +1,75 @@
 import Foundation
 import os
 
-private let maximumMessageSize = 32 * 1024 * 1024
+/// The largest message file that the reader opens.
+private let maximumFileSize = 32 * 1024 * 1024
 
-/// Finds and reads the `.emlx` files of indexed messages.
-/// Cache entries are hints only.
-/// Every read checks containment and calls the supplied parser to check identity.
-public final class Files: Sendable {
+/// Finds and reads the `.emlx` files of messages in the local Mail index.
+///
+/// The reader caches file locations as hints.
+/// Every read checks that the file is inside the mailbox folder,
+/// and the parse closure checks that the file holds the expected message.
+public final class MessageFileReader: Sendable {
     private let cache = OSAllocatedUnfairLock(initialState: [Message.Identifier: URL]())
 
-    /// Creates a file locator with an empty path cache.
+    /// Creates a reader with an empty location cache.
     public init() {}
 
-    /// Reads a message file and validates it through a caller-supplied parser.
-    /// Cached paths are retried through a fresh lookup if parsing fails.
+    /// Reads the file of a message and parses its data.
+    ///
+    /// If the parse closure throws for a cached location,
+    /// the reader finds the file again and calls the closure again.
     /// - Parameters:
-    ///   - record: The indexed message to read.
-    ///   - version: The version directory returned by the database.
-    ///   - cancellation: A shared cancellation signal.
-    ///   - transform: A parser that checks the file's Message-ID against the record.
-    /// - Returns: The parser's result.
-    /// - Throws: A file, parser, or cancellation error.
+    ///   - message: The message to read.
+    ///   - version: The store directory from ``Database/versionURL``.
+    ///   - cancellation: A signal that stops the read.
+    ///   - parse: A closure that parses the file data and checks that it holds the message.
+    /// - Returns: The value that `parse` returns.
+    /// - Throws: ``MailError/storeChanged`` if `version` is not the message's store,
+    ///   another ``MailError`` if the file cannot be found or read,
+    ///   the error that `parse` throws, or `CancellationError`.
     public func read<T>(
-        _ record: Message,
+        _ message: Message,
         version: URL,
         cancellation: Cancellation = Cancellation(),
-        transform: (Data) throws -> T
+        parse: (Data) throws -> T
     ) throws -> T {
         try cancellation.check()
         // A row identifier names a different message in another store.
-        guard version.resolvingSymlinksInPath().lastPathComponent == record.store else {
+        guard version.resolvingSymlinksInPath().lastPathComponent == message.id.store else {
             throw MailError.storeChanged
         }
-        let mailbox = try mailboxDirectory(record.mailboxURL, version: version)
+        guard let mailboxURL = message.mailboxURL else {
+            throw MailError.unsupportedMailbox
+        }
+        let mailbox = try Self.mailboxDirectory(for: mailboxURL, in: version)
 
-        if let cached = cache.withLock({ $0[record.identifier] }) {
+        if let cached = cache.withLock({ $0[message.id] }) {
             do {
-                return try load(cached, for: record, in: mailbox, version: version, cancellation: cancellation, transform: transform)
+                return try load(cached, in: mailbox, version: version, cancellation: cancellation, parse: parse)
             } catch let error as CancellationError {
                 throw error
             } catch {
-                cache.withLock { _ = $0.removeValue(forKey: record.identifier) }
+                cache.withLock { _ = $0.removeValue(forKey: message.id) }
             }
         }
 
-        let url = try locate(record, in: mailbox, cancellation: cancellation)
-        let content = try load(url, for: record, in: mailbox, version: version, cancellation: cancellation, transform: transform)
+        let url = try locate(message, in: mailbox, cancellation: cancellation)
+        let content = try load(url, in: mailbox, version: version, cancellation: cancellation, parse: parse)
         cache.withLock {
             if $0.count >= 1000 { $0.removeAll() }
-            $0[record.identifier] = url
+            $0[message.id] = url
         }
         return content
     }
 
-    /// Maps the URL of a `mailboxes` row to its `.mbox` directory in the store.
+    /// Returns the `.mbox` folder in a store for the URL of a mailbox.
     /// - Parameters:
-    ///   - value: The storage URL recorded by Mail.
-    ///   - version: The version directory returned by the database.
-    /// - Returns: The resolved mailbox directory.
-    /// - Throws: `MailError.unsupportedMailbox` or `MailError.notContained`.
-    public func mailboxDirectory(_ value: String, version: URL) throws -> URL {
-        guard let url = URL(string: value) else {
+    ///   - mailboxURL: The URL string that Mail records for the mailbox.
+    ///   - version: The store directory.
+    /// - Throws: ``MailError/unsupportedMailbox`` or ``MailError/notContained(_:)``.
+    static func mailboxDirectory(for mailboxURL: String, in version: URL) throws -> URL {
+        guard let url = URL(string: mailboxURL) else {
             throw MailError.unsupportedMailbox
         }
 
@@ -87,7 +96,7 @@ public final class Files: Sendable {
     }
 
     /// Searches a mailbox for the one file that holds a message.
-    private func locate(_ record: Message, in mailbox: URL, cancellation: Cancellation) throws -> URL {
+    private func locate(_ message: Message, in mailbox: URL, cancellation: Cancellation) throws -> URL {
         try cancellation.check()
         guard
             let entries = FileManager.default.enumerator(
@@ -111,9 +120,9 @@ public final class Files: Sendable {
             }
 
             switch url.lastPathComponent {
-            case "\(record.id).emlx":
+            case "\(message.id.rowID).emlx":
                 candidates.append(url)
-            case "\(record.id).partial.emlx":
+            case "\(message.id.rowID).partial.emlx":
                 isPartial = true
             default:
                 break
@@ -127,13 +136,13 @@ public final class Files: Sendable {
         return url
     }
 
+    /// Checks a message file and parses its data.
     private func load<T>(
         _ url: URL,
-        for record: Message,
         in mailbox: URL,
         version: URL,
         cancellation: Cancellation,
-        transform: (Data) throws -> T
+        parse: (Data) throws -> T
     ) throws -> T {
         try cancellation.check()
         guard url.isContained(in: mailbox), url.isContained(in: version) else {
@@ -143,12 +152,12 @@ public final class Files: Sendable {
         guard values.isRegularFile == true else {
             throw MailError.messageFileNotRegular
         }
-        guard let size = values.fileSize, size <= maximumMessageSize else {
+        guard let size = values.fileSize, size <= maximumFileSize else {
             throw MailError.messageFileTooLarge
         }
 
         try cancellation.check()
-        let result = try transform(Data(contentsOf: url))
+        let result = try parse(Data(contentsOf: url))
         try cancellation.check()
         return result
     }

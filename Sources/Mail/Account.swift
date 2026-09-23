@@ -1,12 +1,15 @@
 import Foundation
 
-/// Optional account labels stored inside the granted Mail folder.
-public struct Account: Sendable {
-    /// The account identifier recorded by Mail.
+/// A Mail account that owns mailboxes in the store.
+public struct Account: Sendable, Hashable, Identifiable {
+    /// The account identifier that Mail records, usually a UUID string.
     public let id: String
-    /// An email label from the local account map, when available.
+    /// The email address from the store's account map, if the map has one.
     public let email: String?
 
+    /// Loads the email addresses of accounts from the store's account map.
+    /// - Returns: The accounts by uppercase UUID string,
+    ///   or an empty dictionary if the map is missing or cannot be read.
     static func load(in version: URL) -> [String: Account] {
         let url = version.appendingPathComponent("MailData/Signatures/AccountsMap.plist")
         guard url.isContained(in: version),
@@ -26,5 +29,4 @@ public struct Account: Sendable {
         }
         return accounts
     }
-
 }

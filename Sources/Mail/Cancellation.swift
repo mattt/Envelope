@@ -1,24 +1,30 @@
 import Foundation
 import os
 
-/// Carries task cancellation into synchronous work on a dispatch queue.
-public struct Cancellation: Sendable {
-    private let cancelled = OSAllocatedUnfairLock(initialState: false)
+/// A signal that carries task cancellation into synchronous work.
+///
+/// A ``Worker`` creates one signal for each operation,
+/// and cancels it when the calling task is canceled.
+/// Pass the signal to ``Database``, ``MessageFileReader``,
+/// and the parser, so that each of them can stop early.
+public final class Cancellation: Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: false)
 
-    /// Creates a cancellation signal.
+    /// Creates a signal that is not canceled.
     public init() {}
 
-    /// Whether the task or this signal is canceled.
+    /// A Boolean value that indicates whether the signal or the current task is canceled.
     public var isCancelled: Bool {
-        Task.isCancelled || cancelled.withLock { $0 }
+        Task.isCancelled || state.withLock { $0 }
     }
 
-    /// Cancels all operations that share this signal.
+    /// Cancels the operations that check this signal.
     public func cancel() {
-        cancelled.withLock { $0 = true }
+        state.withLock { $0 = true }
     }
 
-    /// Throws `CancellationError` when cancellation is requested.
+    /// Throws an error if the signal or the current task is canceled.
+    /// - Throws: `CancellationError` if ``isCancelled`` is `true`.
     public func check() throws {
         if isCancelled { throw CancellationError() }
     }

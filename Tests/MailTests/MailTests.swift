@@ -93,7 +93,7 @@ final class MailTests: XCTestCase {
         XCTAssertEqual(ids, [1, 2, 3])
         // Finalizing the statement releases its read lock, before connection close.
         XCTAssertEqual(checkpoint(), SQLITE_OK)
-        XCTAssertEqual(try database.fetch(.init()).first?.id, 4)
+        XCTAssertEqual(try database.fetch(.init()).first?.id.rowID, 4)
     }
 
     func testSeparateWriterProcessCanCommitAndThenResetWAL() throws {
@@ -314,14 +314,14 @@ final class MailTests: XCTestCase {
         XCTAssertThrowsError(try Mail.Database(root: root)) { error in
             XCTAssertEqual(error as? MailError, .indexNotReadable)
         }
-        XCTAssertEqual(try Mail.Database.location(in: root).index.lastPathComponent, "Envelope Index")
+        XCTAssertEqual(try Mail.Database.location(in: root).indexURL.lastPathComponent, "Envelope Index")
     }
 
     func testMessageFileMustBeRegularFile() throws {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).last)
         try FileManager.default.createDirectory(at: mailbox.appendingPathComponent("1.emlx"), withIntermediateDirectories: true)
-        XCTAssertThrowsError(try Mail.Files().readContent(record, version: version)) { error in
+        XCTAssertThrowsError(try Mail.MessageFileReader().readContent(record, version: version)) { error in
             XCTAssertEqual(error as? MailError, .messageFileNotRegular)
         }
     }
@@ -341,24 +341,24 @@ final class MailTests: XCTestCase {
 
     func testSearchFiltersPaginationAndLiveWAL() throws {
         let database = try Mail.Database(root: root)
-        XCTAssertEqual(try database.fetch(.init()).map(\.id), [3, 2, 1])
+        XCTAssertEqual(try database.fetch(.init()).map(\.id.rowID), [3, 2, 1])
         var query = Mail.Message.FetchRequest()
         query.sender = "ALICE"
         query.subject = "%"
-        query.mailbox = 1
+        query.mailboxID = 1
         query.startDate = Date(timeIntervalSince1970: 100)
         query.endDate = Date(timeIntervalSince1970: 200)
         query.isRead = false
-        XCTAssertEqual(try database.fetch(query).map(\.id), [1])
+        XCTAssertEqual(try database.fetch(query).map(\.id.rowID), [1])
         query.endDate = Date(timeIntervalSince1970: 201)
         query.isRead = true
-        XCTAssertEqual(try database.fetch(query).map(\.id), [2])
+        XCTAssertEqual(try database.fetch(query).map(\.id.rowID), [2])
         query = .init()
         query.limit = 1
         query.offset = 1
-        XCTAssertEqual(try database.fetch(query).map(\.id), [2])
+        XCTAssertEqual(try database.fetch(query).map(\.id.rowID), [2])
         try execute("INSERT INTO messages VALUES(4,1,1,1,400,0,'four@example.com')")
-        XCTAssertEqual(try database.fetch(.init()).first?.id, 4)
+        XCTAssertEqual(try database.fetch(.init()).first?.id.rowID, 4)
         query.limit = 101
         XCTAssertThrowsError(try database.fetch(query))
         query.limit = 1
@@ -396,11 +396,11 @@ final class MailTests: XCTestCase {
             """
         )
         let database = try Mail.Database(root: root)
-        XCTAssertEqual(try database.fetch(.init(subject: "école")).map(\.id), [4])
-        XCTAssertEqual(try database.fetch(.init(subject: "D'ÉTÉ")).map(\.id), [4])
-        XCTAssertEqual(try database.fetch(.init(sender: "élodie")).map(\.id), [4])
-        XCTAssertEqual(try database.fetch(.init(subject: "ecole")).map(\.id), [])
-        XCTAssertEqual(try database.fetch(.init(sender: "ALICE")).map(\.id), [2, 1])
+        XCTAssertEqual(try database.fetch(.init(subject: "école")).map(\.id.rowID), [4])
+        XCTAssertEqual(try database.fetch(.init(subject: "D'ÉTÉ")).map(\.id.rowID), [4])
+        XCTAssertEqual(try database.fetch(.init(sender: "élodie")).map(\.id.rowID), [4])
+        XCTAssertEqual(try database.fetch(.init(subject: "ecole")).map(\.id.rowID), [])
+        XCTAssertEqual(try database.fetch(.init(sender: "ALICE")).map(\.id.rowID), [2, 1])
     }
 
     func testReceivedDateAndRangeUseUnixEpoch() throws {
@@ -419,19 +419,19 @@ final class MailTests: XCTestCase {
         let start = try XCTUnwrap(formatter.date(from: "2024-01-01T00:00:00Z"))
         let end = try XCTUnwrap(formatter.date(from: "2024-01-02T00:00:00Z"))
         let database = try Mail.Database(root: root)
-        let record = try XCTUnwrap(database.fetch(.init(id: 5)).first)
+        let record = try XCTUnwrap(database.fetch(.init(rowID: 5)).first)
         XCTAssertEqual(record.date, start)
         XCTAssertEqual(record.date.formatted(.iso8601), "2024-01-01T00:00:00Z")
 
         var request = Mail.Message.FetchRequest()
         request.startDate = start
         request.endDate = end
-        XCTAssertEqual(try database.fetch(request).map(\.id), [6, 5])
+        XCTAssertEqual(try database.fetch(request).map(\.id.rowID), [6, 5])
         request.endDate = nil
-        XCTAssertEqual(try database.fetch(request).map(\.id), [7, 6, 5])
+        XCTAssertEqual(try database.fetch(request).map(\.id.rowID), [7, 6, 5])
         request.startDate = nil
         request.endDate = end
-        XCTAssertEqual(try database.fetch(request).map(\.id), [6, 5, 4, 3, 2, 1])
+        XCTAssertEqual(try database.fetch(request).map(\.id.rowID), [6, 5, 4, 3, 2, 1])
     }
 
     func testDefaultAndMaximumLimits() throws {
@@ -453,16 +453,10 @@ final class MailTests: XCTestCase {
     func testListedMailboxIdentifierWorksAsSearchFilter() throws {
         let database = try Mail.Database(root: root)
         let listed = try XCTUnwrap(database.mailboxes().first { $0.id == 1 })
-        let identifier = String(listed.id)
-        let request = Mail.Message.FetchRequest(mailbox: try Mail.Mailbox.parseIdentifier(identifier))
-        XCTAssertEqual(try database.fetch(request).map(\.id), [3, 2, 1])
-        XCTAssertThrowsError(try Mail.Mailbox.parseIdentifier(listed.url)) { error in
-            XCTAssertEqual(error as? ValidationError, .invalidMailboxIdentifier)
-        }
-        for invalid in ["", "0", "-1", "+1", " 1", "1.0", "INBOX", "9223372036854775808"] {
-            XCTAssertThrowsError(try Mail.Mailbox.parseIdentifier(invalid), invalid)
-        }
-        XCTAssertThrowsError(try database.search(.init(mailbox: 999))) { error in
+        let request = Mail.Message.FetchRequest(mailboxID: listed.id)
+        XCTAssertEqual(try database.fetch(request).map(\.id.rowID), [3, 2, 1])
+        XCTAssertEqual(listed.name, "Inbox.mbox")
+        XCTAssertThrowsError(try database.search(.init(mailboxID: 999))) { error in
             XCTAssertEqual(error as? MailError, .mailboxNotFound)
         }
     }
@@ -471,11 +465,11 @@ final class MailTests: XCTestCase {
         let database = try Mail.Database(root: root)
         // A label and home membership must count the message only once.
         try execute("INSERT INTO labels VALUES (1,1), (2,1)")
-        var request = Mail.Message.FetchRequest(subject: "No match", mailbox: 1)
+        var request = Mail.Message.FetchRequest(subject: "No match", mailboxID: 1)
         var result = try database.search(request)
         XCTAssertEqual(result.records.count, 0)
         XCTAssertEqual(result.indexedMessageCount, 3)
-        XCTAssertEqual(result.filters, request)
+        XCTAssertEqual(result.request, request)
 
         request.subject = nil
         request.offset = 100
@@ -484,12 +478,12 @@ final class MailTests: XCTestCase {
         XCTAssertEqual(result.indexedMessageCount, 3)
 
         try execute("INSERT INTO mailboxes VALUES (3, 'imap://account/Empty')")
-        result = try database.search(.init(mailbox: 3))
+        result = try database.search(.init(mailboxID: 3))
         XCTAssertEqual(result.indexedMessageCount, 0)
-        XCTAssertEqual(result.filters.mailbox, 3)
+        XCTAssertEqual(result.request.mailboxID, 3)
 
         try execute("DROP TABLE labels")
-        result = try database.search(.init(mailbox: 1))
+        result = try database.search(.init(mailboxID: 1))
         XCTAssertEqual(result.indexedMessageCount, 2)
         result = try database.search(.init())
         XCTAssertEqual(result.indexedMessageCount, 3)
@@ -555,7 +549,7 @@ final class MailTests: XCTestCase {
     func testFileSeparationIdentityAndStaleCache() throws {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).last)
-        let files = Mail.Files()
+        let files = Mail.MessageFileReader()
         XCTAssertThrowsError(try files.readContent(record, version: version))
         let url = mailbox.appendingPathComponent("1.emlx")
         try emlx("Message-ID: <one@example.com>\nSubject: One\n\nCorrect").write(to: url)
@@ -571,7 +565,7 @@ final class MailTests: XCTestCase {
         XCTAssertThrowsError(try files.readContent(record, version: version))
         try FileManager.default.createSymbolicLink(at: url, withDestinationURL: other.appendingPathComponent("1.emlx"))
         XCTAssertThrowsError(try files.readContent(record, version: version))
-        XCTAssertThrowsError(try files.mailboxDirectory("file:///tmp/Outside.mbox", version: version)) { error in
+        XCTAssertThrowsError(try Mail.MessageFileReader.mailboxDirectory(for: "file:///tmp/Outside.mbox", in: version)) { error in
             XCTAssertEqual(error as? MailError, .notContained(URL(string: "file:///tmp/Outside.mbox")!))
         }
     }
@@ -580,14 +574,14 @@ final class MailTests: XCTestCase {
         let account = "11111111-1111-4111-8111-111111111111"
         try execute("UPDATE mailboxes SET url = 'imap://\(account)/Folder/INBOX' WHERE ROWID = 1")
         let database = try Mail.Database(root: root)
-        let record = try XCTUnwrap(database.fetch(.init(id: 1)).first)
+        let record = try XCTUnwrap(database.fetch(.init(rowID: 1)).first)
         database.close()
         for store in ["V10", "V11"] {
             let messages = root.appendingPathComponent("\(store)/\(account)/Folder.mbox/INBOX.mbox/Data/1/Messages")
             try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true)
             try emlx("Message-ID: <one@example.com>\nSubject: One\n\n\(store)").write(to: messages.appendingPathComponent("1.emlx"))
         }
-        let files = Mail.Files()
+        let files = Mail.MessageFileReader()
         XCTAssertEqual(try files.readContent(record, version: version).body, "V10")
         XCTAssertThrowsError(try files.readContent(record, version: root.appendingPathComponent("V11"))) { error in
             XCTAssertEqual(error as? MailError, .storeChanged)
@@ -598,7 +592,7 @@ final class MailTests: XCTestCase {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).last)
         database.close()
-        let files = Mail.Files()
+        let files = Mail.MessageFileReader()
         let cancellation = Mail.Cancellation()
         cancellation.cancel()
         // A canceled cold lookup must stop before reporting a missing file.
@@ -621,24 +615,24 @@ final class MailTests: XCTestCase {
     func testIdentifierRoundTripAndLookup() throws {
         let database = try Mail.Database(root: root)
         let record = try XCTUnwrap(database.fetch(.init()).first)
-        XCTAssertEqual(record.identifier.description, "V10:1:3")
-        XCTAssertEqual(Mail.Message.Identifier("V10:1:3"), record.identifier)
-        XCTAssertEqual(try database.record(for: record.identifier).id, 3)
+        XCTAssertEqual(record.id.description, "V10:1:3")
+        XCTAssertEqual(Mail.Message.Identifier("V10:1:3"), record.id)
+        XCTAssertEqual(try database.record(for: record.id).id.rowID, 3)
         for invalid in ["", "V10:1", "V10:1:3:4", ":1:3", "V10:0:3", "V10:1:-3", "V10:x:3"] {
             XCTAssertNil(Mail.Message.Identifier(invalid), invalid)
         }
-        XCTAssertThrowsError(try database.record(for: .init(store: "V9", mailbox: 1, message: 3))) { error in
+        XCTAssertThrowsError(try database.record(for: .init(store: "V9", mailboxID: 1, rowID: 3))) { error in
             XCTAssertEqual(error as? MailError, .storeChanged)
         }
         // A label gives mailbox membership in search, but the identifier names the home mailbox.
-        XCTAssertThrowsError(try database.record(for: .init(store: "V10", mailbox: 1, message: 2))) { error in
+        XCTAssertThrowsError(try database.record(for: .init(store: "V10", mailboxID: 1, rowID: 2))) { error in
             XCTAssertEqual(error as? MailError, .messageNotFound)
         }
     }
 
 }
 
-private extension Mail.Files {
+private extension Mail.MessageFileReader {
     func readContent(_ record: Mail.Message, version: URL, cancellation: Mail.Cancellation = .init()) throws -> Emlx.Content {
         try read(record, version: version, cancellation: cancellation) {
             try Emlx.Content(emlx: $0, expectedMessageID: record.messageID, checkCancellation: cancellation.check)

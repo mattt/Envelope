@@ -1,65 +1,77 @@
 import Foundation
 
-private let defaultLimit = 30
-private let maximumLimit = 100
-
 extension Message {
-    /// Filters and pagination for an indexed message search.
-    public struct FetchRequest: Sendable, Equatable {
-        /// Sender address to match (partial, case-insensitive).
-        public var sender: String?
-        /// Subject to match (partial, case-insensitive).
-        public var subject: String?
-        /// Row identifier of a mailbox that holds the message or labels it.
-        public var mailbox: Int64?
-        /// Start of the date range (inclusive).
-        public var startDate: Date?
-        /// End of the date range (exclusive).
-        public var endDate: Date?
-        /// The read state to match, or nil for both states.
-        public var isRead: Bool?
-        /// The result limit, from 1 through 100; defaults to 30.
-        public var limit = defaultLimit
-        /// The number of matching messages to skip.
-        public var offset = 0
-        /// Row identifier of a single message.
-        public var id: Int64?
+    /// A metadata search of the local Mail index.
+    ///
+    /// Filters combine with AND.
+    /// Results are ordered by received date and row identifier, newest first.
+    public struct FetchRequest: Sendable, Hashable {
+        /// The number of results that a request returns when it does not set a limit.
+        public static let defaultLimit = 30
+        /// The largest limit that a request can set.
+        public static let maximumLimit = 100
 
-        /// Creates a metadata request. Filters combine with AND.
+        /// A substring of the sender address to match without regard to case.
+        public var sender: String?
+        /// A substring of the subject to match without regard to case.
+        public var subject: String?
+        /// The row identifier of a mailbox that holds the message or applies it as a label.
+        public var mailboxID: Int64?
+        /// The earliest received date to include.
+        public var startDate: Date?
+        /// The received date at which the range ends.
+        ///
+        /// The range excludes messages that Mail received at this date.
+        public var endDate: Date?
+        /// The read state to match, or `nil` to match both states.
+        public var isRead: Bool?
+        /// The maximum number of results, from 1 through ``maximumLimit``.
+        public var limit: Int
+        /// The number of matching messages to skip.
+        public var offset: Int
+        /// The row identifier of one message to match.
+        var rowID: Int64?
+
+        /// Creates a search request.
         /// - Parameters:
-        ///   - sender: A case-insensitive sender substring.
-        ///   - subject: A case-insensitive subject substring.
-        ///   - mailbox: A home mailbox or label row identifier.
-        ///   - startDate: The inclusive start date.
-        ///   - endDate: The exclusive end date.
-        ///   - isRead: A read-state filter, or nil for both states.
-        ///   - limit: The result limit, from 1 through 100.
+        ///   - sender: A substring of the sender address to match without regard to case.
+        ///   - subject: A substring of the subject to match without regard to case.
+        ///   - mailboxID: The row identifier of a mailbox that holds the message or applies it as a label.
+        ///   - startDate: The earliest received date to include.
+        ///   - endDate: The received date at which the range ends.
+        ///   - isRead: The read state to match, or `nil` to match both states.
+        ///   - limit: The maximum number of results, from 1 through ``maximumLimit``.
         ///   - offset: The number of matching messages to skip.
-        ///   - id: A single message row identifier.
         public init(
             sender: String? = nil,
             subject: String? = nil,
-            mailbox: Int64? = nil,
+            mailboxID: Int64? = nil,
             startDate: Date? = nil,
             endDate: Date? = nil,
             isRead: Bool? = nil,
-            limit: Int = 30,
-            offset: Int = 0,
-            id: Int64? = nil
+            limit: Int = FetchRequest.defaultLimit,
+            offset: Int = 0
         ) {
             self.sender = sender
             self.subject = subject
-            self.mailbox = mailbox
+            self.mailboxID = mailboxID
             self.startDate = startDate
             self.endDate = endDate
             self.isRead = isRead
             self.limit = limit
             self.offset = offset
-            self.id = id
         }
 
+        /// Creates a request for the message with a row identifier.
+        init(rowID: Int64) {
+            self.init()
+            self.rowID = rowID
+        }
+
+        /// Checks the limit, the offset, and the date range.
+        /// - Throws: A ``ValidationError`` that describes the first invalid value.
         func validate() throws {
-            guard (1 ... maximumLimit).contains(limit) else {
+            guard (1 ... Self.maximumLimit).contains(limit) else {
                 throw ValidationError.limitOutOfRange
             }
             guard offset >= 0 else {
@@ -81,7 +93,10 @@ extension Message {
             return "\(containsFunction)(\(column), ?)"
         }
 
-        /// The SQL and its bound values, in placeholder order.
+        /// Returns the SQL for the request and its bound values, in placeholder order.
+        /// - Parameters:
+        ///   - matchesLabels: Whether the mailbox filter also matches label membership.
+        ///   - countOnly: Whether the statement counts the matches without pagination.
         func statement(matchesLabels: Bool, countOnly: Bool = false) -> (
             sql: String, bindings: [Database.Binding]
         ) {
@@ -96,7 +111,7 @@ extension Message {
                 conditions.append(Self.contains("s.subject", subject))
                 bindings.append(.text(subject))
             }
-            if let mailbox {
+            if let mailboxID {
                 if matchesLabels {
                     conditions.append(
                         """
@@ -104,10 +119,10 @@ extension Message {
                         (SELECT 1 FROM labels l WHERE l.message_id = m.ROWID AND l.mailbox_id = ?))
                         """
                     )
-                    bindings += [.integer(mailbox), .integer(mailbox)]
+                    bindings += [.integer(mailboxID), .integer(mailboxID)]
                 } else {
                     conditions.append("m.mailbox = ?")
-                    bindings.append(.integer(mailbox))
+                    bindings.append(.integer(mailboxID))
                 }
             }
             if let startDate {
@@ -122,9 +137,9 @@ extension Message {
                 conditions.append("m.read = ?")
                 bindings.append(.integer(isRead ? 1 : 0))
             }
-            if let id {
+            if let rowID {
                 conditions.append("m.ROWID = ?")
-                bindings.append(.integer(id))
+                bindings.append(.integer(rowID))
             }
             if !countOnly {
                 bindings += [.integer(Int64(limit)), .integer(Int64(offset))]

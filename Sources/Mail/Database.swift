@@ -8,20 +8,26 @@ private let envelopeIndexPath = "MailData/Envelope Index"
 let containsFunction = "envelope_contains"
 
 /// A read-only connection to the Envelope Index of the newest Mail store in a folder.
-/// The index is read live, without a copy and with its write-ahead log.
+///
+/// The connection reads the live index and its write-ahead log, without a copy.
+/// Use a connection from one thread at a time, and close it when you finish.
 public final class Database {
-    /// Limits work on the live index.
-    public struct Configuration: Sendable {
-        /// The cooperative deadline for each SQL statement.
+    /// Limits on the work that a connection does in the live index.
+    public struct Configuration: Sendable, Hashable {
+        /// The time limit for each SQL statement.
+        ///
+        /// The limit is cooperative: SQLite checks it between steps,
+        /// so it cannot stop a statement that is blocked in file I/O.
         public let queryTimeLimit: Duration
-        /// The maximum number of open connections in this process.
-        /// The smallest limit among open connections applies.
+        /// The maximum number of connections that the process can open.
+        ///
+        /// When open connections have different limits, the smallest limit applies.
         public let maximumConnections: Int
 
-        /// Creates limits for live reads.
+        /// Creates limits for a connection.
         /// - Parameters:
-        ///   - queryTimeLimit: A positive per-statement budget; defaults to 100 ms.
-        ///   - maximumConnections: A positive connection limit; defaults to one.
+        ///   - queryTimeLimit: The time limit for each SQL statement. The value must be positive.
+        ///   - maximumConnections: The maximum number of open connections. The value must be positive.
         public init(queryTimeLimit: Duration = .milliseconds(100), maximumConnections: Int = 1) {
             precondition(queryTimeLimit > .zero)
             precondition(maximumConnections > 0)
@@ -30,22 +36,33 @@ public final class Database {
         }
     }
 
-    /// Messages and the local index scope used for a search.
-    public struct SearchResult: Sendable {
-        /// The matching messages, in descending date and row order.
+    /// The locations of a store and its index.
+    public struct Location: Sendable, Hashable {
+        /// The store directory, such as `~/Library/Mail/V10`, with symbolic links resolved.
+        public let versionURL: URL
+        /// The Envelope Index file, with symbolic links resolved.
+        public let indexURL: URL
+    }
+
+    /// The messages that match a search, and the number of messages in the searched scope.
+    public struct SearchResult: Sendable, Hashable {
+        /// The matching messages, newest first.
         public let records: [Message]
-        /// The indexed count before filters and pagination, within the selected mailbox.
-        /// This count does not describe server contents or sync status.
-        public let indexedMessageCount: Int64
-        /// The request used to select the messages.
-        public let filters: Message.FetchRequest
+        /// The number of indexed messages in the requested mailbox, or in the store,
+        /// before the other filters and pagination apply.
+        ///
+        /// The count describes the local index only.
+        /// A count of zero can mean an empty mailbox, or a mailbox that Mail has not indexed.
+        public let indexedMessageCount: Int
+        /// The request that selected the messages.
+        public let request: Message.FetchRequest
     }
 
     // Overlapping readers can prevent WAL checkpoints from completing.
     // Only hold this lock to reserve/release a connection, never during SQLite work.
     private static let admission = OSAllocatedUnfairLock(initialState: [UUID: Int]())
 
-    /// The versioned store directory, such as `~/Library/Mail/V10`.
+    /// The store directory, such as `~/Library/Mail/V10`, with symbolic links resolved.
     public let versionURL: URL
     private var connection: OpaquePointer?
     private let admissionID = UUID()
@@ -53,11 +70,15 @@ public final class Database {
     private let queryTimeLimit: Duration
     private let cancellation: Cancellation
 
-    /// Finds the index without opening a SQLite connection.
-    /// - Parameter root: The Mail folder containing versioned store directories.
-    /// - Returns: The resolved version directory and index file URLs.
-    /// - Throws: A location, access, or containment error.
-    public static func location(in root: URL) throws -> (version: URL, index: URL) {
+    /// Finds the newest store and its index without opening a connection.
+    ///
+    /// The newest store is the `V` directory with the largest number that contains an index.
+    /// - Parameter root: The Mail folder, such as `~/Library/Mail`.
+    /// - Returns: The locations of the store and its index.
+    /// - Throws: ``MailError/indexNotReadable`` if the folder cannot be read,
+    ///   ``MailError/indexNotFound`` if no store has an index,
+    ///   or ``MailError/notContained(_:)`` if a symbolic link leads outside the folder.
+    public static func location(in root: URL) throws -> Location {
         let entries: [URL]
         do {
             entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
@@ -66,8 +87,10 @@ public final class Database {
         }
 
         let versions: [(number: Int, url: URL)] = entries.compactMap { url in
-            let name = url.lastPathComponent
-            guard name.first == "V", let number = Int(name.dropFirst()),
+            let digits = url.lastPathComponent.utf8.dropFirst()
+            guard url.lastPathComponent.first == "V", !digits.isEmpty,
+                digits.allSatisfy({ (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains($0) }),
+                let number = Int(url.lastPathComponent.dropFirst()),
                 FileManager.default.fileExists(atPath: url.appendingPathComponent(envelopeIndexPath).path)
             else { return nil }
             return (number, url)
@@ -80,21 +103,24 @@ public final class Database {
         guard versionURL.isContained(in: root) else {
             throw MailError.notContained(versionURL)
         }
-        let databaseURL = version.appendingPathComponent(envelopeIndexPath).resolvingSymlinksInPath()
-        guard databaseURL.isContained(in: versionURL) else {
-            throw MailError.notContained(databaseURL)
+        let indexURL = version.appendingPathComponent(envelopeIndexPath).resolvingSymlinksInPath()
+        guard indexURL.isContained(in: versionURL) else {
+            throw MailError.notContained(indexURL)
         }
-        return (versionURL, databaseURL)
+        return Location(versionURL: versionURL, indexURL: indexURL)
     }
 
-    /// Opens the newest store in a folder that the caller can access.
-    /// Keep any security scope open until `close()` returns.
-    /// Use the connection from one thread at a time.
+    /// Opens a read-only connection to the newest store in a Mail folder.
+    ///
+    /// The caller must have access to the folder.
+    /// Keep any security scope active until ``close()`` returns.
     /// - Parameters:
-    ///   - root: The Mail folder containing versioned store directories.
-    ///   - configuration: Statement deadlines and process-wide connection limits.
-    ///   - cancellation: A shared cancellation signal.
-    /// - Throws: A store, schema, admission, or cancellation error.
+    ///   - root: The Mail folder, such as `~/Library/Mail`.
+    ///   - configuration: The time limit for statements and the connection limit.
+    ///   - cancellation: A signal that stops the statements of this connection.
+    /// - Throws: A ``MailError`` if the store cannot be found or read,
+    ///   uses an unsupported schema or journal mode, or has too many connections;
+    ///   or `CancellationError`.
     public init(
         root: URL,
         configuration: Configuration = Configuration(),
@@ -102,7 +128,7 @@ public final class Database {
     ) throws {
         try cancellation.check()
         let location = try Self.location(in: root)
-        versionURL = location.version
+        versionURL = location.versionURL
         self.queryTimeLimit = configuration.queryTimeLimit
         self.cancellation = cancellation
         try cancellation.check()
@@ -116,7 +142,7 @@ public final class Database {
         guard hasAdmission else { throw MailError.connectionLimitReached }
 
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE
-        guard sqlite3_open_v2(location.index.path, &connection, flags, nil) == SQLITE_OK else {
+        guard sqlite3_open_v2(location.indexURL.path, &connection, flags, nil) == SQLITE_OK else {
             close()
             throw MailError.indexNotReadable
         }
@@ -172,7 +198,10 @@ public final class Database {
         close()
     }
 
-    /// Closes the connection. Call it before the security scope of the Mail folder ends.
+    /// Closes the connection.
+    ///
+    /// Call this method before the security scope of the Mail folder ends.
+    /// Later calls do nothing.
     public func close() {
         sqlite3_close(connection)
         connection = nil
@@ -182,9 +211,11 @@ public final class Database {
         }
     }
 
-    /// Returns local mailboxes with available account labels.
-    /// - Returns: Mailboxes ordered by storage URL and row identifier.
-    /// - Throws: A database or cancellation error.
+    /// Returns the mailboxes in the local index.
+    ///
+    /// The accounts include email addresses when the store's account map has them.
+    /// - Returns: The mailboxes, ordered by URL and row identifier.
+    /// - Throws: A ``MailError`` or `CancellationError`.
     public func mailboxes() throws -> [Mailbox] {
         let accounts = Account.load(in: versionURL)
         return try query("SELECT ROWID, url FROM mailboxes ORDER BY url, ROWID") {
@@ -192,29 +223,35 @@ public final class Database {
         }
     }
 
-    /// Searches metadata and counts the local mailbox scope before filtering.
-    /// - Parameter request: Filters and pagination to apply.
-    /// - Returns: The matching records, scope count, and applied request.
-    /// - Throws: A validation, database, or cancellation error.
+    /// Returns the messages that match a request,
+    /// and the number of indexed messages in the requested scope.
+    ///
+    /// Both values come from one snapshot of the index.
+    /// - Parameter request: The filters and pagination.
+    /// - Returns: The messages, the count, and the request.
+    /// - Throws: A ``ValidationError`` if the request is invalid,
+    ///   a ``MailError`` if the index cannot be read, or `CancellationError`.
     public func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try readTransaction {
             let records = try fetch(request)
             // Count the selected local scope without the search filters or pagination.
-            let scope = Message.FetchRequest(mailbox: request.mailbox)
+            let scope = Message.FetchRequest(mailboxID: request.mailboxID)
             let (sql, bindings) = scope.statement(matchesLabels: try hasLabels, countOnly: true)
             let count = try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0
-            return SearchResult(records: records, indexedMessageCount: count, filters: request)
+            return SearchResult(records: records, indexedMessageCount: Int(count), request: request)
         }
     }
 
-    /// Returns messages that match a metadata request.
-    /// - Parameter request: Filters and pagination to apply.
-    /// - Returns: Matching messages in descending received date and row order.
-    /// - Throws: A validation, database, or cancellation error.
+    /// Returns the messages that match a request.
+    /// - Parameter request: The filters and pagination.
+    /// - Returns: The matching messages, newest first.
+    /// - Throws: A ``ValidationError`` if the request is invalid,
+    ///   ``MailError/mailboxNotFound`` if the mailbox is not in the index,
+    ///   another ``MailError`` if the index cannot be read, or `CancellationError`.
     public func fetch(_ request: Message.FetchRequest) throws -> [Message] {
         try request.validate()
-        if let mailbox = request.mailbox {
-            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailbox)]) { _ in true }
+        if let mailboxID = request.mailboxID {
+            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID)]) { _ in true }
             guard !exists.isEmpty else {
                 throw MailError.mailboxNotFound
             }
@@ -223,25 +260,28 @@ public final class Database {
         return try query(sql, bindings) { try Message($0, store: versionURL.lastPathComponent) }
     }
 
-    /// Returns the indexed message that an identifier from an earlier fetch refers to.
-    /// - Parameter identifier: The store, home mailbox, and message identifiers.
-    /// - Returns: The current indexed message.
-    /// - Throws: `MailError.storeChanged`, `MailError.messageNotFound`,
-    ///   or a database or cancellation error.
+    /// Returns the current values of a message from an earlier search.
+    /// - Parameter identifier: The identifier of the message.
+    /// - Returns: The message.
+    /// - Throws: ``MailError/storeChanged`` if the identifier is from another store,
+    ///   ``MailError/messageNotFound`` if the message is no longer in its home mailbox,
+    ///   another ``MailError`` if the index cannot be read, or `CancellationError`.
     public func record(for identifier: Message.Identifier) throws -> Message {
         guard identifier.store == versionURL.lastPathComponent else {
             throw MailError.storeChanged
         }
-        guard let record = try fetch(.init(id: identifier.message)).first,
-            record.mailbox == identifier.mailbox
+        guard let record = try fetch(.init(rowID: identifier.rowID)).first,
+            record.id.mailboxID == identifier.mailboxID
         else {
             throw MailError.messageNotFound
         }
         return record
     }
 
-    /// Whether the store has a usable `labels` table.
+    /// A Boolean value that indicates whether the store has a `labels` table.
+    ///
     /// Stores with that table record label membership of a message there.
+    /// The getter throws if the table does not have the expected columns.
     private var hasLabels: Bool {
         get throws {
             let tables = try query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'labels'") {

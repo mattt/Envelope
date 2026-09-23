@@ -1,41 +1,34 @@
 import Foundation
 
-/// A row of the `mailboxes` table.
-public struct Mailbox: Sendable {
-    /// The mailbox row identifier.
+/// A mailbox in the local Mail store.
+public struct Mailbox: Sendable, Hashable, Identifiable {
+    /// The row identifier of the mailbox.
+    ///
+    /// To search the mailbox, set ``Message/FetchRequest/mailboxID`` to this value.
     public let id: Int64
-    /// The storage URL recorded by Mail.
-    public let url: String
-    /// The account identifier and any available email label.
+    /// The URL string that Mail records for the mailbox, if any.
+    ///
+    /// Mail records a `file` URL, or an account URL such as `imap://<account UUID>/INBOX`.
+    public let url: String?
+    /// The account that owns the mailbox, if Mail records one.
     public let account: Account?
 
-    /// The last path component of the storage URL.
-    public var name: String {
-        URL(string: url)?.lastPathComponent ?? url
+    /// The last path component of the mailbox URL, such as `INBOX`.
+    public var name: String? {
+        url.map { URL(string: $0)?.lastPathComponent ?? $0 }
     }
 
-    /// Parses a positive decimal mailbox row identifier.
-    /// - Parameter value: The decimal form of a mailbox `id`.
-    /// - Returns: The row identifier.
-    /// - Throws: `ValidationError` if the string is not a positive integer.
-    public static func parseIdentifier(_ value: String) throws -> Int64 {
-        guard !value.isEmpty, value.utf8.allSatisfy({ (48 ... 57).contains($0) }),
-            let id = Int64(value), id > 0
-        else {
-            throw ValidationError.invalidMailboxIdentifier
-        }
-        return id
-    }
-
+    /// Reads the current row of a `mailboxes` query.
     init(_ row: Database.Row, version: URL, accounts: [String: Account]) throws {
         guard let id = row.integer(0) else {
             throw MailError.unsupportedSchema
         }
         self.id = id
-        self.url = row.text(1) ?? ""
-        let mailboxURL = URL(string: url)
+        url = row.text(1)
+        let mailboxURL = url.flatMap(URL.init(string:))
         let accountID: String?
         if let mailboxURL, mailboxURL.isFileURL, mailboxURL.isContained(in: version) {
+            // A file URL names the account directory after the store directory.
             accountID =
                 mailboxURL.standardizedFileURL.pathComponents.dropFirst(
                     version.standardizedFileURL.pathComponents.count
@@ -47,5 +40,4 @@ public struct Mailbox: Sendable {
             accounts[UUID(uuidString: $0)?.uuidString ?? $0] ?? Account(id: $0, email: nil)
         }
     }
-
 }
