@@ -43,6 +43,33 @@ extension MailTests {
             #expect(try database.fetch(query).isEmpty)
         }
 
+        @Test(
+            "Invalid requests fail validation",
+            arguments: [
+                (Mail.Message.FetchRequest(limit: 0), ValidationError.limitOutOfRange),
+                (Mail.Message.FetchRequest(limit: Mail.Message.FetchRequest.maximumLimit + 1), .limitOutOfRange),
+                (Mail.Message.FetchRequest(offset: -1), .negativeOffset),
+                (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 200), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
+                (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 300), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
+            ]
+        )
+        func invalidRequestsFailValidation(request: Mail.Message.FetchRequest, expected: ValidationError) throws {
+            let database = try Mail.Database(root: store.root)
+            #expect(throws: expected) { try database.fetch(request) }
+            #expect(throws: expected) { try database.search(request) }
+        }
+
+        @Test("A new request uses the default limit and no filters")
+        func newRequestDefaults() {
+            let request = Mail.Message.FetchRequest()
+            #expect(request.limit == Mail.Message.FetchRequest.defaultLimit)
+            #expect(request.limit == 30)
+            #expect(Mail.Message.FetchRequest.maximumLimit == 100)
+            #expect(request.offset == 0)
+            #expect(request.sender == nil && request.subject == nil && request.mailboxID == nil)
+            #expect(request.startDate == nil && request.endDate == nil && request.isRead == nil)
+        }
+
         @Test("Substring search ignores case beyond ASCII")
         func substringSearchIgnoresCaseBeyondASCII() throws {
             try store.execute(

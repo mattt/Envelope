@@ -49,6 +49,48 @@ extension MailTests {
             }
         }
 
+        @Test(
+            "Mailbox URLs that do not name a store folder are unsupported",
+            arguments: [
+                nil, "", "imap://account/INBOX", "imap://11111111-1111-4111-8111-111111111111",
+                "imap://11111111-1111-4111-8111-111111111111/../INBOX", "imap://11111111-1111-4111-8111-111111111111/./INBOX",
+            ]
+        )
+        func unsupportedMailboxURLs(url: String?) throws {
+            if let url {
+                try store.execute("UPDATE mailboxes SET url = '\(url)' WHERE ROWID = 1")
+            } else {
+                try store.execute("UPDATE mailboxes SET url = NULL WHERE ROWID = 1")
+            }
+            let database = try Mail.Database(root: store.root)
+            let record = try #require(database.fetch(.init(rowID: 1)).first)
+            #expect(record.mailboxURL == url)
+            #expect(throws: MailError.unsupportedMailbox) {
+                try Mail.MessageFileReader().readContent(record, version: store.version)
+            }
+        }
+
+        @Test("A file mailbox URL must name an .mbox folder")
+        func fileMailboxURLMustNameMboxFolder() throws {
+            let folder = store.version.appendingPathComponent("account/Inbox")
+            try store.execute("UPDATE mailboxes SET url = '\(folder.absoluteString)' WHERE ROWID = 1")
+            let database = try Mail.Database(root: store.root)
+            let record = try #require(database.fetch(.init(rowID: 1)).first)
+            #expect(throws: MailError.unsupportedMailbox) {
+                try Mail.MessageFileReader().readContent(record, version: store.version)
+            }
+        }
+
+        @Test("A mailbox without a URL has no name or account")
+        func mailboxWithoutURL() throws {
+            try store.execute("UPDATE mailboxes SET url = NULL WHERE ROWID = 1")
+            let database = try Mail.Database(root: store.root)
+            let mailbox = try #require(database.mailboxes().first { $0.id == 1 })
+            #expect(mailbox.url == nil)
+            #expect(mailbox.name == nil)
+            #expect(mailbox.account == nil)
+        }
+
         @Test("Reads map account mailboxes to folders, and reject another store")
         func fileReadMapsAccountMailboxesAndRejectsAnotherStore() throws {
             let account = "11111111-1111-4111-8111-111111111111"

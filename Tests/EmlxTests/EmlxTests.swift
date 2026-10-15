@@ -66,6 +66,38 @@ struct EmlxTests {
         #expect(error?.localizedDescription.contains("byte-count prefix") == true)
     }
 
+    @Test("A byte-count line must end within the first 24 bytes")
+    func byteCountLineMustEndEarly() throws {
+        let error = #expect(throws: EmlxError.self) {
+            try Emlx.Container(data: Data((String(repeating: "1", count: 24) + "\nSubject: x\n\nBody").utf8))
+        }
+        #expect(error == .malformedMessage("invalid .emlx byte-count prefix"))
+        #expect(throws: EmlxError.malformedMessage("invalid .emlx byte-count prefix")) {
+            try Emlx.Container(data: Data())
+        }
+    }
+
+    @Test("An unknown transfer encoding is unsupported")
+    func unknownTransferEncodingIsUnsupported() throws {
+        #expect(throws: EmlxError.unsupportedMessage("unknown transfer encoding")) {
+            try Emlx.Content(emlx: emlx("Content-Transfer-Encoding: x-uuencode\n\nbody"))
+        }
+    }
+
+    @Test(
+        "Every Emlx error has a description",
+        arguments: [
+            EmlxError.partialMessage, .encryptedMessage, .malformedMessage("bad header"), .unsupportedMessage("no text"), .messageMismatch,
+        ]
+    )
+    func errorDescription(error: EmlxError) throws {
+        let description = try #require(error.errorDescription)
+        #expect(!description.isEmpty)
+        #expect(error.localizedDescription == description)
+        if case .malformedMessage(let reason) = error { #expect(description.contains(reason)) }
+        if case .unsupportedMessage(let reason) = error { #expect(description.contains(reason)) }
+    }
+
     @Test("The byte count and encoded headers decode")
     func byteCountAndEncodedHeaders() throws {
         let content = try Emlx.Content(
