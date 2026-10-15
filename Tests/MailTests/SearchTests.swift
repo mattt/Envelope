@@ -46,14 +46,14 @@ extension MailTests {
         @Test(
             "Invalid requests fail validation",
             arguments: [
-                (Mail.Message.FetchRequest(limit: 0), ValidationError.limitOutOfRange),
+                (Mail.Message.FetchRequest(limit: 0), Mail.Message.FetchRequest.ValidationError.limitOutOfRange),
                 (Mail.Message.FetchRequest(limit: Mail.Message.FetchRequest.maximumLimit + 1), .limitOutOfRange),
                 (Mail.Message.FetchRequest(offset: -1), .negativeOffset),
                 (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 200), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
                 (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 300), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
             ]
         )
-        func invalidRequestsFailValidation(request: Mail.Message.FetchRequest, expected: ValidationError) throws {
+        func invalidRequestsFailValidation(request: Mail.Message.FetchRequest, expected: Mail.Message.FetchRequest.ValidationError) throws {
             let database = try Mail.Database(root: store.root)
             #expect(throws: expected) { try database.fetch(request) }
             #expect(throws: expected) { try database.search(request) }

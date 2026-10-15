@@ -229,7 +229,7 @@ public final class Database {
     /// Both values come from one snapshot of the index.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The messages, the count, and the request.
-    /// - Throws: A ``ValidationError`` if the request is invalid,
+    /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
     ///   a ``MailError`` if the index cannot be read, or `CancellationError`.
     public func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try readTransaction {
@@ -245,7 +245,7 @@ public final class Database {
     /// Returns the messages that match a request.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The matching messages, newest first.
-    /// - Throws: A ``ValidationError`` if the request is invalid,
+    /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
     ///   ``MailError/mailboxNotFound`` if the mailbox is not in the index,
     ///   another ``MailError`` if the index cannot be read, or `CancellationError`.
     public func fetch(_ request: Message.FetchRequest) throws -> [Message] {

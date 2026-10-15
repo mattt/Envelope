@@ -27,8 +27,11 @@ extension MailTests {
             #expect(MailError.notContained(URL(fileURLWithPath: "/tmp/Outside.mbox")).localizedDescription.contains("/tmp/Outside.mbox"))
         }
 
-        @Test("Every validation error has a description", arguments: [ValidationError.limitOutOfRange, .negativeOffset, .invalidDateRange])
-        func validationErrorDescription(error: ValidationError) throws {
+        @Test(
+            "Every request validation error has a description",
+            arguments: [Mail.Message.FetchRequest.ValidationError.limitOutOfRange, .negativeOffset, .invalidDateRange]
+        )
+        func validationErrorDescription(error: Mail.Message.FetchRequest.ValidationError) throws {
             let description = try #require(error.errorDescription)
             #expect(!description.isEmpty)
             #expect(error.localizedDescription == description)
@@ -36,7 +39,7 @@ extension MailTests {
 
         @Test("The limit error names the maximum limit")
         func limitErrorNamesMaximum() {
-            #expect(ValidationError.limitOutOfRange.localizedDescription.contains("\(Mail.Message.FetchRequest.maximumLimit)"))
+            #expect(Mail.Message.FetchRequest.ValidationError.limitOutOfRange.localizedDescription.contains("\(Mail.Message.FetchRequest.maximumLimit)"))
         }
     }
 }
