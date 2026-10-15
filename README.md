@@ -10,8 +10,9 @@ It provides two Swift modules:
 
 ## Requirements
 
-Envelope requires macOS 13 or later and Swift 6.1 or later.
-Development requires Xcode with a compatible macOS SDK.
+- Xcode 16.3+
+- Swift 6.1+
+- macOS 13.0+
 
 The caller must have access to the Mail folder.
 Envelope does not request permissions or manage security-scoped bookmarks.
@@ -19,25 +20,31 @@ Keep any security scope active until all database and file reads finish.
 
 ## Installation
 
-During development, add Envelope as a local Swift package dependency:
+### Swift Package Manager
+
+Add Envelope as a dependency to your `Package.swift`:
 
 ```swift
-.package(path: "../Envelope")
+dependencies: [
+    .package(url: "https://github.com/mattt/Envelope.git", from: "0.1.0")
+]
 ```
 
-Add the products your target uses:
+Then add the products you need to your target's dependencies:
 
 ```swift
-.product(name: "Mail", package: "Envelope"),
-.product(name: "Emlx", package: "Envelope"),
+targets: [
+    .target(
+        name: "YourTarget",
+        dependencies: [
+            .product(name: "Mail", package: "Envelope"),
+            .product(name: "Emlx", package: "Envelope"),
+        ]
+    )
+]
 ```
 
-The planned first release is `0.1.0`.
-Once that tag is published, the remote dependency is:
-
-```swift
-.package(url: "https://github.com/mattt/Envelope", from: "0.1.0")
-```
+A target that reads only metadata can depend on `Mail` alone.
 
 ## Usage
 
@@ -97,10 +104,16 @@ if let identifier = result.records.first?.id {
         let record = try database.record(for: identifier)
         database.close()
 
-        return try reader.read(record, version: database.versionURL,
-                               cancellation: cancellation) { data in
-            try Emlx.Content(emlx: data, expectedMessageID: record.messageID,
-                             checkCancellation: cancellation.check)
+        return try reader.read(
+            record,
+            version: database.versionURL,
+            cancellation: cancellation
+        ) { data in
+            try Emlx.Content(
+                emlx: data,
+                expectedMessageID: record.messageID,
+                checkCancellation: cancellation.check
+            )
         }
     }
     print(content.mediaType, content.body)
@@ -167,6 +180,8 @@ swift format lint --strict --recursive .
 If a separately installed Swift toolchain conflicts with the selected Xcode SDK,
 use `xcrun --toolchain XcodeDefault swift` for these commands.
 The tests use synthetic fixtures and do not need access to the Mail folder.
+`UsageTests` runs the usage examples above against a synthetic store;
+keep the two in sync.
 
 ## FAQ
 
