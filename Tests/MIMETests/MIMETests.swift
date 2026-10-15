@@ -253,6 +253,34 @@ extension MIMETests {
 }
 
 extension MIMETests {
+    @Test("Transport padding can follow a delimiter")
+    func transportPaddingAfterDelimiter() throws {
+        // RFC 2046 section 5.1.1: linear white space can follow a boundary delimiter.
+        let part = try parse("Content-Type: multipart/mixed; boundary=x\n\n--x \t\n\nbody\n--x-- \n")
+        #expect(part.children.map(\.text) == ["body"])
+    }
+    @Test("Quoted-printable keeps white space inside a line")
+    func quotedPrintableKeepsInnerWhiteSpace() throws {
+        // RFC 2045 section 6.7, rule 3: only white space at the end of a line is removed.
+        #expect(try parse("Content-Transfer-Encoding: quoted-printable\n\na \tb").text == "a \tb")
+    }
+    @Test("Continuations join encoded and plain segments")
+    func continuationsJoinEncodedAndPlainSegments() throws {
+        // RFC 2231 section 4.1: only segments with an asterisk are percent-decoded.
+        let disposition = "attachment; filename*0*=utf-8''caf%C3%A9; filename*1=%41.txt"
+        #expect(try parse("Content-Disposition: \(disposition)\n\nx").filename == "café%41.txt")
+    }
+    @Test("Content-Type comments and quoted strings keep escaped characters")
+    func contentTypeEscapes() throws {
+        // RFC 5322 section 3.2.2: a comment can contain an escaped parenthesis.
+        let part = try parse("Content-Type: text/plain (a \\) b); charset=utf-8; name=\"a\\\"b.txt\"\n\nBody")
+        #expect(part.mediaType == "text/plain")
+        #expect(part.parameters["charset"] == "utf-8")
+        #expect(part.filename == "a\"b.txt")
+    }
+}
+
+extension MIMETests {
     @Test("The default total header limit applies", arguments: -1 ... 1)
     func defaultTotalHeaderThreshold(delta: Int) throws {
         let root = "Content-Type: multipart/mixed; boundary=x\n\n"
