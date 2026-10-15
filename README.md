@@ -151,6 +151,8 @@ The default is one open connection per process.
 When callers choose different limits, the smallest limit of the open connections
 and the requested connection applies to admission.
 A connection over the limit fails with `MailError.connectionLimitReached`.
+A time limit or connection limit that is not positive
+fails with `Database.Configuration.ValidationError`.
 Use each database on one thread at a time.
 
 `Mail.Worker` runs one blocking operation at a time on a dispatch queue.

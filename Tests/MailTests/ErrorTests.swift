@@ -37,6 +37,16 @@ extension MailTests {
             #expect(error.localizedDescription == description)
         }
 
+        @Test(
+            "Every configuration validation error has a description",
+            arguments: [Mail.Database.Configuration.ValidationError.invalidQueryTimeLimit, .invalidMaximumConnections]
+        )
+        func configurationErrorDescription(error: Mail.Database.Configuration.ValidationError) throws {
+            let description = try #require(error.errorDescription)
+            #expect(!description.isEmpty)
+            #expect(error.localizedDescription == description)
+        }
+
         @Test("The limit error names the maximum limit")
         func limitErrorNamesMaximum() {
             #expect(Mail.Message.FetchRequest.ValidationError.limitOutOfRange.localizedDescription.contains("\(Mail.Message.FetchRequest.maximumLimit)"))

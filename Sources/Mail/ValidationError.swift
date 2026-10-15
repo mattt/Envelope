@@ -25,3 +25,25 @@ extension Message.FetchRequest {
         }
     }
 }
+
+extension Database.Configuration {
+    /// An error that describes an invalid connection configuration.
+    public enum ValidationError: LocalizedError, Hashable {
+        /// The time limit for each SQL statement is not positive.
+        case invalidQueryTimeLimit
+        /// The maximum number of connections is not positive.
+        case invalidMaximumConnections
+
+        /// English text that describes the error.
+        ///
+        /// Envelope does not localize this text.
+        public var errorDescription: String? {
+            switch self {
+            case .invalidQueryTimeLimit:
+                return "The query time limit must be positive."
+            case .invalidMaximumConnections:
+                return "The maximum number of connections must be positive."
+            }
+        }
+    }
+}

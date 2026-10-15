@@ -25,14 +25,27 @@ public final class Database {
         public let maximumConnections: Int
 
         /// Creates limits for a connection.
+        ///
+        /// The initializer does not check the values.
+        /// ``Database/init(root:configuration:cancellation:)`` throws
+        /// a ``ValidationError`` for a value that is not positive.
         /// - Parameters:
         ///   - queryTimeLimit: The time limit for each SQL statement. The value must be positive.
         ///   - maximumConnections: The maximum number of open connections. The value must be positive.
         public init(queryTimeLimit: Duration = .milliseconds(100), maximumConnections: Int = 1) {
-            precondition(queryTimeLimit > .zero)
-            precondition(maximumConnections > 0)
             self.queryTimeLimit = queryTimeLimit
             self.maximumConnections = maximumConnections
+        }
+
+        /// Checks that the time limit and the connection limit are positive.
+        /// - Throws: A ``ValidationError`` that describes the first invalid value.
+        func validate() throws {
+            guard queryTimeLimit > .zero else {
+                throw ValidationError.invalidQueryTimeLimit
+            }
+            guard maximumConnections > 0 else {
+                throw ValidationError.invalidMaximumConnections
+            }
         }
     }
 
@@ -118,7 +131,8 @@ public final class Database {
     ///   - root: The Mail folder, such as `~/Library/Mail`.
     ///   - configuration: The time limit for statements and the connection limit.
     ///   - cancellation: A signal that stops the statements of this connection.
-    /// - Throws: A ``MailError`` if the store cannot be found or read,
+    /// - Throws: A ``Configuration/ValidationError`` if a limit is not positive;
+    ///   a ``MailError`` if the store cannot be found or read,
     ///   uses an unsupported schema or journal mode, or has too many connections;
     ///   or `CancellationError`.
     public init(
@@ -127,6 +141,7 @@ public final class Database {
         cancellation: Cancellation = Cancellation()
     ) throws {
         try cancellation.check()
+        try configuration.validate()
         let location = try Self.location(in: root)
         versionURL = location.versionURL
         self.queryTimeLimit = configuration.queryTimeLimit

@@ -36,6 +36,27 @@ extension MailTests {
             #expect(try reopened.fetch(.init()).count == 3)
         }
 
+        @Test(
+            "Limits that are not positive fail before admission",
+            arguments: [
+                (Mail.Database.Configuration(queryTimeLimit: .zero), Mail.Database.Configuration.ValidationError.invalidQueryTimeLimit),
+                (Mail.Database.Configuration(queryTimeLimit: .milliseconds(-1)), .invalidQueryTimeLimit),
+                (Mail.Database.Configuration(maximumConnections: 0), .invalidMaximumConnections),
+                (Mail.Database.Configuration(maximumConnections: -1), .invalidMaximumConnections),
+            ]
+        )
+        func invalidConfigurationFailsBeforeAdmission(
+            configuration: Mail.Database.Configuration,
+            expected: Mail.Database.Configuration.ValidationError
+        ) throws {
+            #expect(throws: expected) { try Mail.Database(root: store.root, configuration: configuration) }
+            // The missing folder is not checked, because validation comes first.
+            #expect(throws: expected) {
+                try Mail.Database(root: store.root.appendingPathComponent("Missing"), configuration: configuration)
+            }
+            #expect(try Mail.Database(root: store.root).fetch(.init()).count == 3)
+        }
+
         @Test("A WAL writer can commit during a read and checkpoint afterward")
         func walWriterCanCommitDuringReadAndCheckpointAfterward() throws {
             let database = try Mail.Database(root: store.root)
