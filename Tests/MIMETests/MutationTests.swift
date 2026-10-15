@@ -1,10 +1,16 @@
 import Foundation
-import XCTest
+import Testing
+
 @testable import MIME
 
-final class MutationTests: XCTestCase {
-    func testSeededMutations() throws {
-        guard let countText = ProcessInfo.processInfo.environment["MIME_MUTATIONS"], let count = Int(countText) else { return }
+@Suite
+struct MutationTests {
+    /// The number of mutations to run, from `MIME_MUTATIONS`; `Tools/fuzz.py` sets it.
+    static let count = ProcessInfo.processInfo.environment["MIME_MUTATIONS"].flatMap { Int($0) }
+
+    @Test("Seeded mutations fail only with parser failures", .enabled(if: count != nil, "Set MIME_MUTATIONS or run Tools/fuzz.py"))
+    func seededMutations() throws {
+        let count = try #require(Self.count)
         let directory = Bundle.module.resourceURL!.appendingPathComponent("Fixtures")
         var corpus = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).filter { $0.pathExtension == "mime" }.sorted {
             $0.path < $1.path
@@ -49,7 +55,7 @@ final class MutationTests: XCTestCase {
                 FileHandle.standardError.write(Data("Mutation \(iteration)/\(count)\n".utf8))
             }
             do { _ = try Parser.parse(Data(bytes)) } catch is Failure {} catch {
-                XCTFail("Unexpected error at mutation \(iteration): \(error)")
+                Issue.record("Unexpected error at mutation \(iteration): \(error)")
                 throw error
             }
         }
@@ -57,7 +63,8 @@ final class MutationTests: XCTestCase {
 }
 
 extension MutationTests {
-    func testSavedRegressions() throws {
+    @Test("Saved regressions fail only with parser failures")
+    func savedRegressions() throws {
         let directory = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/Regressions")
         guard FileManager.default.fileExists(atPath: directory.path) else { return }
         for path in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where path.pathExtension == "mime" {
