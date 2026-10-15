@@ -9,7 +9,7 @@ on:
 jobs:
   test-macos:
     name: Swift ${{ matrix.swift }} on macOS ${{ matrix.macos }} with Xcode ${{ matrix.xcode }}
-    runs-on: macos-${{ matrix.macos }}
+    runs-on: ${{ matrix.runs-on }}
     env:
       DEVELOPER_DIR: "/Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer"
     strategy:
@@ -19,9 +19,20 @@ jobs:
           - swift: "6.1"
             xcode: "16.3"
             macos: "15"
+            runs-on: macos-15
           - swift: "6.2"
             xcode: "26.0"
             macos: "26"
+            runs-on: macos-26
+          - swift: "6.3"
+            xcode: "26.4"
+            macos: "26"
+            runs-on: macos-26
+          # The xcode-27 image is a public preview that runs macOS 27.
+          - swift: "6.4"
+            xcode: "27.0"
+            macos: "27"
+            runs-on: xcode-27
     timeout-minutes: 10
     steps:
       - name: Checkout code
