@@ -41,6 +41,9 @@ public enum MailError: LocalizedError, Hashable {
     /// Mail has downloaded only part of the message.
     case partialMessage
 
+    /// English text that describes the error and, for some errors, what to do next.
+    ///
+    /// Envelope does not localize this text.
     public var errorDescription: String? {
         switch self {
         case .indexNotFound:

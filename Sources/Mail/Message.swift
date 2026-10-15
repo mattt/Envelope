@@ -22,6 +22,13 @@ public struct Message: Sendable, Hashable, Identifiable {
             self.rowID = rowID
         }
 
+        /// Creates an identifier from its string form, such as `V10:12:345`.
+        ///
+        /// The string must have three fields that colons separate:
+        /// a store name that is not empty, a positive mailbox row identifier,
+        /// and a positive message row identifier.
+        /// The initializer returns `nil` if the string does not have this form.
+        /// - Parameter description: The string form of an identifier.
         public init?(_ description: String) {
             let parts = description.split(separator: ":", omittingEmptySubsequences: false)
             guard parts.count == 3, !parts[0].isEmpty,
@@ -31,6 +38,9 @@ public struct Message: Sendable, Hashable, Identifiable {
             self.init(store: String(parts[0]), mailboxID: mailboxID, rowID: rowID)
         }
 
+        /// The string form of the identifier, `store:mailboxID:rowID`.
+        ///
+        /// Pass this string to ``init(_:)`` to create the identifier again.
         public var description: String {
             "\(store):\(mailboxID):\(rowID)"
         }

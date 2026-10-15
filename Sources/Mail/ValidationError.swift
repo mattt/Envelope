@@ -9,6 +9,9 @@ public enum ValidationError: LocalizedError, Hashable {
     /// The start date is not earlier than the end date.
     case invalidDateRange
 
+    /// English text that describes the error.
+    ///
+    /// Envelope does not localize this text.
     public var errorDescription: String? {
         switch self {
         case .limitOutOfRange:

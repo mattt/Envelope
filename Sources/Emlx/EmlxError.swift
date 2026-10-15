@@ -13,6 +13,9 @@ public enum EmlxError: LocalizedError, Hashable {
     /// The MIME Message-ID does not match the Message-ID in the index.
     case messageMismatch
 
+    /// English text that describes the error.
+    ///
+    /// Envelope does not localize this text.
     public var errorDescription: String? {
         switch self {
         case .partialMessage:
