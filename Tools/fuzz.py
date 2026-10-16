@@ -33,9 +33,6 @@ command = [
     "--sanitize=address",
     "--scratch-path",
     ".build-asan",
-    # The tests use Swift Testing. Listing XCTest tests for --filter
-    # stalled the sanitized run with Swift 6.2 (Xcode 26.0) in CI.
-    "--disable-xctest",
     "--filter",
     "MutationTests",
 ]
