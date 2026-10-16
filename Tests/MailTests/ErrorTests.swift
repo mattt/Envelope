@@ -10,7 +10,7 @@ extension MailTests {
             "Every Mail error has a description",
             arguments: [
                 MailError.indexNotFound, .indexNotReadable, .unsupportedSchema, .unsupportedJournalMode, .databaseBusy,
-                .connectionLimitReached, .connectionClosed, .operationInProgress, .queryTimedOut, .queryFailed("disk I/O error"),
+                .connectionLimitReached, .connectionClosed, .queryTimedOut, .queryFailed("disk I/O error"),
                 .notContained(URL(fileURLWithPath: "/tmp/Outside.mbox")), .storeChanged, .mailboxNotFound, .messageNotFound,
                 .messageFileNotFound, .messageFileTooLarge, .messageFileNotRegular, .unsupportedMailbox, .partialMessage,
             ]
@@ -29,7 +29,7 @@ extension MailTests {
 
         @Test(
             "Every request validation error has a description",
-            arguments: [Mail.Message.FetchRequest.ValidationError.limitOutOfRange, .negativeOffset, .invalidDateRange]
+            arguments: [Mail.Message.FetchRequest.ValidationError.limitOutOfRange, .invalidDateRange]
         )
         func validationErrorDescription(error: Mail.Message.FetchRequest.ValidationError) throws {
             let description = try #require(error.errorDescription)
@@ -39,9 +39,9 @@ extension MailTests {
 
         @Test(
             "Every configuration validation error has a description",
-            arguments: [Mail.Database.Configuration.ValidationError.invalidQueryTimeLimit, .invalidMaximumConnections]
+            arguments: [Mail.Store.Configuration.ValidationError.invalidQueryTimeLimit, .invalidMaximumConnections, .invalidSnapshotTimeLimit]
         )
-        func configurationErrorDescription(error: Mail.Database.Configuration.ValidationError) throws {
+        func configurationErrorDescription(error: Mail.Store.Configuration.ValidationError) throws {
             let description = try #require(error.errorDescription)
             #expect(!description.isEmpty)
             #expect(error.localizedDescription == description)

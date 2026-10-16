@@ -9,11 +9,11 @@ private let maximumFileSize = 32 * 1024 * 1024
 /// The reader caches file locations as hints.
 /// Every read checks that the file is inside the mailbox folder,
 /// and the parse closure checks that the file holds the expected message.
-public final class MessageFileReader: Sendable {
+final class MessageFileReader: Sendable {
     private let cache = OSAllocatedUnfairLock(initialState: [Message.Identifier: URL]())
 
     /// Creates a reader with an empty location cache.
-    public init() {}
+    init() {}
 
     /// Reads the file of a message and parses its data.
     ///
@@ -28,7 +28,7 @@ public final class MessageFileReader: Sendable {
     /// - Throws: ``MailError/storeChanged`` if `version` is not the message's store,
     ///   another ``MailError`` if the file cannot be found or read,
     ///   the error that `parse` throws, or `CancellationError`.
-    public func read<T>(
+    func read<T>(
         _ message: Message,
         version: URL,
         cancellation: Cancellation = Cancellation(),
@@ -61,31 +61,6 @@ public final class MessageFileReader: Sendable {
             $0[message.id] = url
         }
         return content
-    }
-
-    /// Reads the file of a message in the newest store of a Mail folder, and parses its data.
-    ///
-    /// The reader finds the store as ``Database/read(root:configuration:cancellation:_:)`` does.
-    /// If the parse closure throws for a cached location,
-    /// the reader finds the file again and calls the closure again.
-    /// - Parameters:
-    ///   - message: The message to read.
-    ///   - root: The Mail folder, such as `~/Library/Mail`.
-    ///   - cancellation: A signal that stops the read.
-    ///   - parse: A closure that parses the file data and checks that it holds the message.
-    /// - Returns: The value that `parse` returns.
-    /// - Throws: ``MailError/storeChanged`` if the newest store is not the message's store,
-    ///   another ``MailError`` if the store or the file cannot be found or read,
-    ///   the error that `parse` throws, or `CancellationError`.
-    public func read<T>(
-        _ message: Message,
-        root: URL,
-        cancellation: Cancellation = Cancellation(),
-        parse: (Data) throws -> T
-    ) throws -> T {
-        try cancellation.check()
-        let location = try Database.location(in: root)
-        return try read(message, version: location.versionURL, cancellation: cancellation, parse: parse)
     }
 
     /// Returns the `.mbox` folder in a store for the URL of a mailbox.

@@ -9,6 +9,10 @@ let package = Package(
     ],
     products: [
         .library(
+            name: "Envelope",
+            targets: ["Envelope"]
+        ),
+        .library(
             name: "Mail",
             targets: ["Mail"]
         ),
@@ -30,9 +34,13 @@ let package = Package(
             name: "Emlx",
             dependencies: ["MIME"]
         ),
+        .target(
+            name: "Envelope",
+            dependencies: ["Mail", "Emlx"]
+        ),
         .testTarget(
             name: "MailTests",
-            dependencies: ["Mail", "Emlx"]
+            dependencies: ["Mail", "Emlx", "Envelope"]
         ),
         .testTarget(
             name: "EmlxTests",

@@ -14,17 +14,16 @@ public enum MailError: LocalizedError, Hashable {
     case databaseBusy
     /// The process already has the maximum number of open connections to the index.
     case connectionLimitReached
-    /// The connection to the index is closed.
+    /// The connection to the index is closed,
+    /// for example because a snapshot is used after its closure returns.
     case connectionClosed
-    /// The worker is already running an operation.
-    case operationInProgress
     /// A statement did not finish within its time limit.
     case queryTimedOut
     /// SQLite reported an error, with its message.
     case queryFailed(String)
     /// A file or folder resolves to a location outside the Mail folder.
     case notContained(URL)
-    /// An identifier or message refers to a different store than the one that is open.
+    /// An identifier, cursor, or message refers to a different store than the one that is open.
     case storeChanged
     /// The index does not contain the mailbox.
     case mailboxNotFound
@@ -60,8 +59,6 @@ public enum MailError: LocalizedError, Hashable {
             return "Too many connections to the Mail index are open. Close a connection and try again."
         case .connectionClosed:
             return "The connection to the Mail index is closed."
-        case .operationInProgress:
-            return "Another Mail operation is in progress. Try again when it finishes."
         case .queryTimedOut:
             return "Reading the Mail index stopped at the time limit, to avoid delaying Mail. A search with more specific filters can finish sooner."
         case .queryFailed(let message):
