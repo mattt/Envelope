@@ -29,14 +29,11 @@ extension MailTests {
             #expect(try database.fetch(query).map(\.id.rowID) == [2])
             query = .init()
             query.limit = 1
-            query.offset = 1
+            query.cursor = try database.search(query).nextCursor
             #expect(try database.fetch(query).map(\.id.rowID) == [2])
             try store.execute("INSERT INTO messages VALUES(4,1,1,1,400,0,'four@example.com')")
             #expect(try database.fetch(.init()).first?.id.rowID == 4)
             query.limit = 101
-            #expect(throws: (any Error).self) { try database.fetch(query) }
-            query.limit = 1
-            query.offset = -1
             #expect(throws: (any Error).self) { try database.fetch(query) }
             query = .init()
             query.sender = "' OR 1=1 --"
@@ -48,7 +45,6 @@ extension MailTests {
             arguments: [
                 (Mail.Message.FetchRequest(limit: 0), Mail.Message.FetchRequest.ValidationError.limitOutOfRange),
                 (Mail.Message.FetchRequest(limit: Mail.Message.FetchRequest.maximumLimit + 1), .limitOutOfRange),
-                (Mail.Message.FetchRequest(offset: -1), .negativeOffset),
                 (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 200), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
                 (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 300), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
             ]
@@ -65,9 +61,52 @@ extension MailTests {
             #expect(request.limit == Mail.Message.FetchRequest.defaultLimit)
             #expect(request.limit == 30)
             #expect(Mail.Message.FetchRequest.maximumLimit == 100)
-            #expect(request.offset == 0)
+            #expect(request.cursor == nil)
             #expect(request.sender == nil && request.subject == nil && request.mailboxID == nil)
             #expect(request.startDate == nil && request.endDate == nil && request.isRead == nil)
+        }
+
+        @Test("Cursors page through results without gaps or repeats")
+        func cursorsPageWithoutGapsOrRepeats() throws {
+            // Messages 4 and 5 share message 3's received date, so the row identifier breaks the tie.
+            try store.execute("INSERT INTO messages VALUES (4,1,1,1,300,0,'four@example.com'), (5,2,1,1,300,0,'five@example.com')")
+            let database = try Mail.Database(root: store.root)
+            var request = Mail.Message.FetchRequest(limit: 2)
+            var pages: [[Int64]] = []
+            repeat {
+                let page = try database.search(request)
+                pages.append(page.records.map(\.id.rowID))
+                #expect(page.nextCursor == page.records.last.map(Mail.Message.FetchRequest.Cursor.init(after:)) || page.nextCursor == nil)
+                if pages.count == 1 {
+                    // Mail that arrives between pages does not shift later pages.
+                    try store.execute("INSERT INTO messages VALUES (6,1,1,1,600,0,'six@example.com')")
+                }
+                request.cursor = page.nextCursor
+            } while request.cursor != nil
+            #expect(pages == [[5, 4], [3, 2], [1]])
+
+            // A page that ends exactly at the last match has no next cursor.
+            request = .init(limit: 3)
+            request.cursor = try database.search(.init(limit: 3)).nextCursor
+            let last = try database.search(request)
+            #expect(last.records.map(\.id.rowID) == [3, 2, 1])
+            #expect(last.nextCursor == nil)
+        }
+
+        @Test("Cursors round-trip through strings, and reject another store")
+        func cursorStringFormAndStore() throws {
+            let database = try Mail.Database(root: store.root)
+            let page = try database.search(.init(limit: 1))
+            let cursor = try #require(page.nextCursor)
+            #expect(cursor.description == "V10:300.0:3")
+            #expect(Mail.Message.FetchRequest.Cursor(cursor.description) == cursor)
+            #expect(Mail.Message.FetchRequest.Cursor(after: page.records[0]) == cursor)
+            for invalid in ["", "V10:300", ":300:3", "V10:x:3", "V10:300:0", "V10:inf:3", "V10:300:3:4"] {
+                #expect(Mail.Message.FetchRequest.Cursor(invalid) == nil, "\(invalid)")
+            }
+            let stale = Mail.Message.FetchRequest(cursor: Mail.Message.FetchRequest.Cursor("V9:300.0:3"))
+            #expect(throws: MailError.storeChanged) { try database.fetch(stale) }
+            #expect(throws: MailError.storeChanged) { try database.search(stale) }
         }
 
         @Test("Substring search ignores case beyond ASCII")
@@ -158,7 +197,7 @@ extension MailTests {
             #expect(result.request == request)
 
             request.subject = nil
-            request.offset = 100
+            request.cursor = Mail.Message.FetchRequest.Cursor("V10:0.0:1")
             result = try database.search(request)
             #expect(result.records.count == 0)
             #expect(result.indexedMessageCount == 3)

@@ -11,76 +11,25 @@ let containsFunction = "envelope_contains"
 ///
 /// The connection reads the live index and its write-ahead log, without a copy.
 /// Use a connection from one thread at a time, and close it when you finish.
-public final class Database {
-    /// Limits on the work that a connection does in the live index.
-    public struct Configuration: Sendable, Hashable {
-        /// The time limit for each SQL statement.
-        ///
-        /// The limit is cooperative: SQLite checks it between steps,
-        /// so it cannot stop a statement that is blocked in file I/O.
-        public let queryTimeLimit: Duration
-        /// The maximum number of connections that the process can open.
-        ///
-        /// When open connections have different limits, the smallest limit applies.
-        public let maximumConnections: Int
-
-        /// Creates limits for a connection.
-        ///
-        /// The initializer does not check the values.
-        /// ``Database/init(root:configuration:cancellation:)`` throws
-        /// a ``ValidationError`` for a value that is not positive.
-        /// - Parameters:
-        ///   - queryTimeLimit: The time limit for each SQL statement. The value must be positive.
-        ///   - maximumConnections: The maximum number of open connections. The value must be positive.
-        public init(queryTimeLimit: Duration = .milliseconds(100), maximumConnections: Int = 1) {
-            self.queryTimeLimit = queryTimeLimit
-            self.maximumConnections = maximumConnections
-        }
-
-        /// Checks that the time limit and the connection limit are positive.
-        /// - Throws: A ``ValidationError`` that describes the first invalid value.
-        func validate() throws {
-            guard queryTimeLimit > .zero else {
-                throw ValidationError.invalidQueryTimeLimit
-            }
-            guard maximumConnections > 0 else {
-                throw ValidationError.invalidMaximumConnections
-            }
-        }
-    }
-
-    /// The locations of a store and its index.
-    public struct Location: Sendable, Hashable {
-        /// The store directory, such as `~/Library/Mail/V10`, with symbolic links resolved.
-        public let versionURL: URL
-        /// The Envelope Index file, with symbolic links resolved.
-        public let indexURL: URL
-    }
-
-    /// The messages that match a search, and the number of messages in the searched scope.
-    public struct SearchResult: Sendable, Hashable {
-        /// The matching messages, newest first.
-        public let records: [Message]
-        /// The number of indexed messages in the requested mailbox, or in the store,
-        /// before the other filters and pagination apply.
-        ///
-        /// The count describes the local index only.
-        /// A count of zero can mean an empty mailbox, or a mailbox that Mail has not indexed.
-        public let indexedMessageCount: Int
-        /// The request that selected the messages.
-        public let request: Message.FetchRequest
-    }
+final class Database {
+    typealias Configuration = Store.Configuration
+    typealias Location = Store.Location
+    typealias SearchResult = Store.SearchResult
 
     // Overlapping readers can prevent WAL checkpoints from completing.
     // Only hold this lock to reserve/release a connection, never during SQLite work.
     private static let admission = OSAllocatedUnfairLock(initialState: [UUID: Int]())
 
     /// The store directory, such as `~/Library/Mail/V10`, with symbolic links resolved.
-    public let versionURL: URL
+    let versionURL: URL
+    /// The Envelope Index file, with symbolic links resolved.
+    let indexURL: URL
     private var connection: OpaquePointer?
     private let admissionID = UUID()
     private var hasAdmission = false
     private let queryTimeLimit: Duration
+    /// The time at which statements in the current snapshot stop, if a snapshot sets one.
+    var snapshotDeadline: ContinuousClock.Instant?
     private let cancellation: Cancellation
 
     /// Finds the newest store and its index without opening a connection.
@@ -91,7 +40,7 @@ public final class Database {
     /// - Throws: ``MailError/indexNotReadable`` if the folder cannot be read,
     ///   ``MailError/indexNotFound`` if no store has an index,
     ///   or ``MailError/notContained(_:)`` if a symbolic link leads outside the folder.
-    public static func location(in root: URL) throws -> Location {
+    static func location(in root: URL) throws -> Location {
         let entries: [URL]
         do {
             entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
@@ -135,7 +84,7 @@ public final class Database {
     ///   a ``MailError`` if the store cannot be found or read,
     ///   uses an unsupported schema or journal mode, or has too many connections;
     ///   or `CancellationError`.
-    public init(
+    init(
         root: URL,
         configuration: Configuration = Configuration(),
         cancellation: Cancellation = Cancellation()
@@ -144,6 +93,7 @@ public final class Database {
         try configuration.validate()
         let location = try Self.location(in: root)
         versionURL = location.versionURL
+        indexURL = location.indexURL
         self.queryTimeLimit = configuration.queryTimeLimit
         self.cancellation = cancellation
         try cancellation.check()
@@ -213,38 +163,11 @@ public final class Database {
         close()
     }
 
-    /// Opens a read-only connection to the newest store in a Mail folder,
-    /// runs a closure in one read transaction, and closes the connection.
-    ///
-    /// Every query in `body` reads the same snapshot of the index.
-    /// The connection closes before this method returns or throws,
-    /// so the caller can read message files afterward without holding a connection.
-    /// Do not keep `database` after `body` returns;
-    /// its queries then throw ``MailError/connectionClosed``.
-    /// - Parameters:
-    ///   - root: The Mail folder, such as `~/Library/Mail`.
-    ///   - configuration: The time limit for statements and the connection limit.
-    ///   - cancellation: A signal that stops the statements of this connection.
-    ///   - body: A closure that queries the database.
-    /// - Returns: The value that `body` returns.
-    /// - Throws: The errors that ``init(root:configuration:cancellation:)`` throws,
-    ///   or the error that `body` throws.
-    public static func read<T>(
-        root: URL,
-        configuration: Configuration = Configuration(),
-        cancellation: Cancellation = Cancellation(),
-        _ body: (Database) throws -> T
-    ) throws -> T {
-        let database = try Database(root: root, configuration: configuration, cancellation: cancellation)
-        defer { database.close() }
-        return try database.readTransaction { try body(database) }
-    }
-
     /// Closes the connection.
     ///
     /// Call this method before the security scope of the Mail folder ends.
     /// Later calls do nothing.
-    public func close() {
+    func close() {
         sqlite3_close(connection)
         connection = nil
         if hasAdmission {
@@ -258,7 +181,7 @@ public final class Database {
     /// The accounts include email addresses when the store's account map has them.
     /// - Returns: The mailboxes, ordered by URL and row identifier.
     /// - Throws: A ``MailError`` or `CancellationError`.
-    public func mailboxes() throws -> [Mailbox] {
+    func mailboxes() throws -> [Mailbox] {
         let accounts = Account.load(in: versionURL)
         return try query("SELECT ROWID, url FROM mailboxes ORDER BY url, ROWID") {
             try Mailbox($0, version: versionURL, accounts: accounts)
@@ -273,14 +196,19 @@ public final class Database {
     /// - Returns: The messages, the count, and the request.
     /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
     ///   a ``MailError`` if the index cannot be read, or `CancellationError`.
-    public func search(_ request: Message.FetchRequest) throws -> SearchResult {
+    func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try readTransaction {
-            let records = try fetch(request)
+            let page = try fetchPage(request)
             // Count the selected local scope without the search filters or pagination.
             let scope = Message.FetchRequest(mailboxID: request.mailboxID)
             let (sql, bindings) = scope.statement(matchesLabels: try hasLabels, countOnly: true)
             let count = try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0
-            return SearchResult(records: records, indexedMessageCount: Int(count), request: request)
+            return SearchResult(
+                records: page.records,
+                nextCursor: page.hasMore ? page.records.last.map(Message.FetchRequest.Cursor.init(after:)) : nil,
+                indexedMessageCount: Int(count),
+                request: request
+            )
         }
     }
 
@@ -288,10 +216,21 @@ public final class Database {
     /// - Parameter request: The filters and pagination.
     /// - Returns: The matching messages, newest first.
     /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
+    ///   ``MailError/storeChanged`` if the cursor is from another store,
     ///   ``MailError/mailboxNotFound`` if the mailbox is not in the index,
     ///   another ``MailError`` if the index cannot be read, or `CancellationError`.
-    public func fetch(_ request: Message.FetchRequest) throws -> [Message] {
+    func fetch(_ request: Message.FetchRequest) throws -> [Message] {
+        try fetchPage(request).records
+    }
+
+    /// Returns one page of the messages that match a request,
+    /// and whether more messages follow it.
+    private func fetchPage(_ request: Message.FetchRequest) throws -> (records: [Message], hasMore: Bool) {
         try request.validate()
+        // A row identifier names a different message in another store.
+        if let cursor = request.cursor, cursor.store != versionURL.lastPathComponent {
+            throw MailError.storeChanged
+        }
         if let mailboxID = request.mailboxID {
             let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID)]) { _ in true }
             guard !exists.isEmpty else {
@@ -299,7 +238,10 @@ public final class Database {
             }
         }
         let (sql, bindings) = request.statement(matchesLabels: try hasLabels)
-        return try query(sql, bindings) { try Message($0, store: versionURL.lastPathComponent) }
+        var records = try query(sql, bindings) { try Message($0, store: versionURL.lastPathComponent) }
+        let hasMore = records.count > request.limit
+        if hasMore { records.removeLast(records.count - request.limit) }
+        return (records, hasMore)
     }
 
     /// Returns the current values of a message from an earlier search.
@@ -308,7 +250,7 @@ public final class Database {
     /// - Throws: ``MailError/storeChanged`` if the identifier is from another store,
     ///   ``MailError/messageNotFound`` if the message is no longer in its home mailbox,
     ///   another ``MailError`` if the index cannot be read, or `CancellationError`.
-    public func record(for identifier: Message.Identifier) throws -> Message {
+    func record(for identifier: Message.Identifier) throws -> Message {
         guard identifier.store == versionURL.lastPathComponent else {
             throw MailError.storeChanged
         }
@@ -340,7 +282,7 @@ public final class Database {
     /// The transaction ends even if the time limit has passed or the work is canceled,
     /// because an open read transaction delays WAL checkpoints.
     func readTransaction<T>(_ body: () throws -> T) throws -> T {
-        // A scoped read already holds a transaction; its statements share it.
+        // A snapshot already holds a transaction; its statements share it.
         if let connection, sqlite3_get_autocommit(connection) == 0 {
             return try body()
         }
@@ -361,7 +303,7 @@ public final class Database {
         transform: (Row) throws -> T
     ) throws -> [T] {
         guard let connection else { throw MailError.connectionClosed }
-        let budget = QueryBudget(timeLimit: queryTimeLimit, cancellation: cancellation)
+        let budget = QueryBudget(timeLimit: queryTimeLimit, deadline: snapshotDeadline, cancellation: cancellation)
         try budget.check()
         sqlite3_progress_handler(
             connection,
@@ -418,8 +360,10 @@ public final class Database {
         let deadline: ContinuousClock.Instant
         let cancellation: Cancellation
 
-        init(timeLimit: Duration, cancellation: Cancellation) {
-            deadline = ContinuousClock.now.advanced(by: timeLimit)
+        /// Creates a budget that ends at the statement's time limit or at `deadline`, whichever comes first.
+        init(timeLimit: Duration, deadline: ContinuousClock.Instant?, cancellation: Cancellation) {
+            let statementDeadline = ContinuousClock.now.advanced(by: timeLimit)
+            self.deadline = deadline.map { min($0, statementDeadline) } ?? statementDeadline
             self.cancellation = cancellation
         }
 

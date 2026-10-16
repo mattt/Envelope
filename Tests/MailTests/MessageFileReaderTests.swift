@@ -91,25 +91,6 @@ extension MailTests {
             #expect(mailbox.account == nil)
         }
 
-        @Test("Reads find the store from the Mail folder")
-        func readFindsStoreFromRoot() throws {
-            let root = store.root
-            let record = try Mail.Database.read(root: root) { try $0.record(for: #require(Mail.Message.Identifier("V10:1:1"))) }
-            try store.emlx("Message-ID: <one@example.com>\nSubject: One\n\nFrom root").write(to: store.mailbox.appendingPathComponent("1.emlx"))
-            let reader = Mail.MessageFileReader()
-            let body = try reader.read(record, root: root) { try Emlx.Content(emlx: $0, expectedMessageID: record.messageID).body }
-            #expect(body == "From root")
-
-            // A newer store makes the identifier stale.
-            let newer = root.appendingPathComponent("V11/MailData")
-            try FileManager.default.createDirectory(at: newer, withIntermediateDirectories: true)
-            FileManager.default.createFile(atPath: newer.appendingPathComponent("Envelope Index").path, contents: nil)
-            #expect(throws: MailError.storeChanged) { try reader.read(record, root: root) { $0 } }
-            #expect(throws: MailError.indexNotReadable) {
-                try reader.read(record, root: root.appendingPathComponent("Missing")) { $0 }
-            }
-        }
-
         @Test("Reads map account mailboxes to folders, and reject another store")
         func fileReadMapsAccountMailboxesAndRejectsAnotherStore() throws {
             let account = "11111111-1111-4111-8111-111111111111"

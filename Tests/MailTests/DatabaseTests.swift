@@ -57,54 +57,6 @@ extension MailTests {
             #expect(try Mail.Database(root: store.root).fetch(.init()).count == 3)
         }
 
-        @Test("A scoped read uses one snapshot and closes the connection")
-        func scopedReadUsesOneSnapshotAndCloses() throws {
-            let root = store.root
-            var escaped: Mail.Database?
-            let (before, result) = try Mail.Database.read(root: root) { database in
-                escaped = database
-                let before = try database.fetch(.init()).count
-                try store.execute("INSERT INTO messages VALUES(4,1,1,1,400,0,'four@example.com')")
-                return (before, try database.search(.init()))
-            }
-            #expect(before == 3)
-            #expect(result.records.count == 3)
-            #expect(result.indexedMessageCount == 3)
-            // The read transaction and the connection end when the closure returns.
-            #expect(store.checkpoint() == SQLITE_OK)
-            #expect(throws: MailError.connectionClosed) { try escaped?.fetch(.init()) }
-            #expect(try Mail.Database.read(root: root) { try $0.fetch(.init()).count } == 4)
-        }
-
-        @Test("A scoped read closes the connection when its closure throws")
-        func scopedReadClosesOnError() throws {
-            let root = store.root
-            #expect(throws: CocoaError(.featureUnsupported)) {
-                try Mail.Database.read(root: root) { _ -> Int in throw CocoaError(.featureUnsupported) }
-            }
-            #expect(throws: MailError.mailboxNotFound) {
-                try Mail.Database.read(root: root) { try $0.search(.init(mailboxID: 999)) }
-            }
-            #expect(store.checkpoint() == SQLITE_OK)
-            #expect(try Mail.Database(root: root).fetch(.init()).count == 3)
-        }
-
-        @Test("A scoped read reports open errors and cancellation")
-        func scopedReadReportsOpenErrors() throws {
-            let root = store.root
-            #expect(throws: Mail.Database.Configuration.ValidationError.invalidMaximumConnections) {
-                try Mail.Database.read(root: root, configuration: .init(maximumConnections: 0)) { _ in }
-            }
-            let cancellation = Mail.Cancellation()
-            cancellation.cancel()
-            #expect(throws: CancellationError.self) {
-                try Mail.Database.read(root: root, cancellation: cancellation) { _ in }
-            }
-            let open = try Mail.Database(root: root)
-            #expect(throws: MailError.connectionLimitReached) { try Mail.Database.read(root: root) { _ in } }
-            open.close()
-        }
-
         @Test("A WAL writer can commit during a read and checkpoint afterward")
         func walWriterCanCommitDuringReadAndCheckpointAfterward() throws {
             let database = try Mail.Database(root: store.root)

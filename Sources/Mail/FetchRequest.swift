@@ -27,8 +27,10 @@ extension Message {
         public var isRead: Bool?
         /// The maximum number of results, from 1 through ``maximumLimit``.
         public var limit: Int
-        /// The number of matching messages to skip.
-        public var offset: Int
+        /// The position after which results start, or `nil` for the first page.
+        ///
+        /// Use ``Store/SearchResult/nextCursor`` from the previous page.
+        public var cursor: Cursor?
         /// The row identifier of one message to match.
         var rowID: Int64?
 
@@ -41,7 +43,7 @@ extension Message {
         ///   - endDate: The received date at which the range ends.
         ///   - isRead: The read state to match, or `nil` to match both states.
         ///   - limit: The maximum number of results, from 1 through ``maximumLimit``.
-        ///   - offset: The number of matching messages to skip.
+        ///   - cursor: The position after which results start, or `nil` for the first page.
         public init(
             sender: String? = nil,
             subject: String? = nil,
@@ -50,7 +52,7 @@ extension Message {
             endDate: Date? = nil,
             isRead: Bool? = nil,
             limit: Int = FetchRequest.defaultLimit,
-            offset: Int = 0
+            cursor: Cursor? = nil
         ) {
             self.sender = sender
             self.subject = subject
@@ -59,7 +61,7 @@ extension Message {
             self.endDate = endDate
             self.isRead = isRead
             self.limit = limit
-            self.offset = offset
+            self.cursor = cursor
         }
 
         /// Creates a request for the message with a row identifier.
@@ -68,14 +70,11 @@ extension Message {
             self.rowID = rowID
         }
 
-        /// Checks the limit, the offset, and the date range.
+        /// Checks the limit and the date range.
         /// - Throws: A ``ValidationError`` that describes the first invalid value.
         func validate() throws {
             guard (1 ... Self.maximumLimit).contains(limit) else {
                 throw ValidationError.limitOutOfRange
-            }
-            guard offset >= 0 else {
-                throw ValidationError.negativeOffset
             }
             if let startDate, let endDate, startDate >= endDate {
                 throw ValidationError.invalidDateRange
@@ -141,8 +140,14 @@ extension Message {
                 conditions.append("m.ROWID = ?")
                 bindings.append(.integer(rowID))
             }
+            if let cursor, !countOnly {
+                // Results are newest first, so the next page starts below the cursor.
+                conditions.append("(m.date_received < ? OR (m.date_received = ? AND m.ROWID < ?))")
+                bindings += [.double(cursor.receivedTimestamp), .double(cursor.receivedTimestamp), .integer(cursor.rowID)]
+            }
             if !countOnly {
-                bindings += [.integer(Int64(limit)), .integer(Int64(offset))]
+                // One extra row shows whether another page follows.
+                bindings.append(.integer(Int64(limit) + 1))
             }
 
             let whereClause =
@@ -150,7 +155,7 @@ extension Message {
             let columns =
                 countOnly
                 ? "COUNT(*)" : "m.ROWID, m.mailbox, b.url, s.subject, a.address, m.date_received, m.read, m.message_id"
-            let pagination = countOnly ? "" : "ORDER BY m.date_received DESC, m.ROWID DESC LIMIT ? OFFSET ?"
+            let pagination = countOnly ? "" : "ORDER BY m.date_received DESC, m.ROWID DESC LIMIT ?"
             let sql = """
                 SELECT \(columns)
                 FROM messages m
@@ -161,6 +166,50 @@ extension Message {
                 \(pagination)
                 """
             return (sql, bindings)
+        }
+    }
+}
+
+extension Message.FetchRequest {
+    /// A position in search results, after which the next page starts.
+    ///
+    /// A cursor names the last message of a page by its received date and row identifier,
+    /// so messages that arrive between requests do not shift later pages, as an offset would.
+    /// The string form round-trips through ``init(_:)``; treat it as opaque.
+    public struct Cursor: Sendable, Hashable, LosslessStringConvertible {
+        /// The name of the store directory, such as `V10`.
+        let store: String
+        /// The value of the index's `date_received` column for the message.
+        let receivedTimestamp: Double
+        /// The row identifier of the message.
+        let rowID: Int64
+
+        /// Creates a cursor that starts the next page after a message.
+        /// - Parameter message: The last message of a page.
+        public init(after message: Message) {
+            store = message.id.store
+            receivedTimestamp = message.receivedTimestamp
+            rowID = message.id.rowID
+        }
+
+        /// Creates a cursor from its string form.
+        ///
+        /// The initializer returns `nil` if the string is not the form that ``description`` returns.
+        /// - Parameter description: The string form of a cursor.
+        public init?(_ description: String) {
+            let parts = description.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 3, !parts[0].isEmpty,
+                let receivedTimestamp = Double(parts[1]), receivedTimestamp.isFinite,
+                let rowID = Int64(parts[2]), rowID > 0
+            else { return nil }
+            store = String(parts[0])
+            self.receivedTimestamp = receivedTimestamp
+            self.rowID = rowID
+        }
+
+        /// The string form of the cursor, such as `V10:1704067200.0:345`.
+        public var description: String {
+            "\(store):\(receivedTimestamp):\(rowID)"
         }
     }
 }

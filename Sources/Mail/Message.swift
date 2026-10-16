@@ -63,6 +63,10 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// Some schemas store the RFC 5322 Message-ID in this column.
     /// Other schemas store an integer, which does not identify the message file.
     public let messageID: String?
+    /// The value of the index's `date_received` column, in seconds since 1970.
+    ///
+    /// Cursors keep this value, so that they compare with the column exactly.
+    let receivedTimestamp: Double
 
     /// Reads the current row of a statement from ``FetchRequest/statement(matchesLabels:countOnly:)``.
     init(_ row: Database.Row, store: String) throws {
@@ -77,6 +81,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         subject = row.text(3)
         sender = row.text(4)
         self.date = Date(timeIntervalSince1970: date)
+        receivedTimestamp = date
         isRead = row.integer(6) == 1
         messageID = row.text(7)
     }

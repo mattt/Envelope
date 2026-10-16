@@ -1,4 +1,4 @@
-import Emlx
+import Envelope
 import Foundation
 import Testing
 
@@ -7,17 +7,20 @@ import Testing
 extension MailTests {
     /// Runs the README usage examples against the synthetic store.
     ///
-    /// Keep the body of each `worker.run` closure the same as the README.
+    /// Keep each block the same as the README,
+    /// except for the root folder, the identifier string, and the page size.
     @Suite
     struct UsageTests {
         let store: MailStore
+        let account = "11111111-1111-4111-8111-111111111111"
 
         init() throws {
             store = try MailStore()
             try store.execute(
                 """
-                INSERT INTO subjects VALUES (3, 'Invoice 42');
-                INSERT INTO messages VALUES (4,1,3,1,400,0,'invoice@example.com');
+                UPDATE mailboxes SET url = 'imap://\(account)/INBOX' WHERE ROWID = 1;
+                INSERT INTO subjects VALUES (3, 'Invoice 42'), (4, 'Invoice 43');
+                INSERT INTO messages VALUES (4,1,3,1,400,0,'invoice@example.com'), (5,1,4,1,500,1,'invoice43@example.com');
                 """
             )
             let mime = """
@@ -36,42 +39,62 @@ extension MailTests {
                 %PDF
                 --x--
                 """
-            try store.emlx(mime).write(to: store.mailbox.appendingPathComponent("4.emlx"))
+            let inbox = store.version.appendingPathComponent("\(account)/INBOX.mbox/Messages")
+            try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+            try store.emlx(mime).write(to: inbox.appendingPathComponent("4.emlx"))
         }
 
-        @Test("The README search and read examples work")
+        @Test("The README examples work")
         func readmeExamples() async throws {
             let root = store.root
-            let worker = Mail.Worker()
+            let store = try Mail.Store(root: root)
+            try await store.checkAccess()
 
-            let result = try await worker.run { cancellation in
-                try Mail.Database.read(root: root, cancellation: cancellation) { database in
-                    let mailboxID = try database.mailboxes().first?.id
-                    return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
-                }
+            for mailbox in try await store.mailboxes() {
+                print(mailbox.id, mailbox.name ?? "", mailbox.account?.email ?? "")
             }
-            #expect(result.records.map(\.id.description) == ["V10:1:4"])
-            #expect(result.records.first?.subject == "Invoice 42")
-            #expect(result.indexedMessageCount == 4)
 
-            let reader = Mail.MessageFileReader()
-            let identifier = try #require(result.records.first?.id)
-            let content = try await worker.run { cancellation in
-                let record = try Mail.Database.read(root: root, cancellation: cancellation) { database in
-                    try database.record(for: identifier)
-                }
-                return try reader.read(record, root: root, cancellation: cancellation) { data in
-                    try Emlx.Content(
-                        emlx: data,
-                        expectedMessageID: record.messageID,
-                        checkCancellation: cancellation.check
-                    )
-                }
+            var pages: [[String]] = []
+            var request = Mail.Message.FetchRequest(subject: "Invoice", limit: 1)
+            repeat {
+                let page = try await store.search(request)
+                pages.append(page.records.map(\.id.description))
+                request.cursor = page.nextCursor
+            } while request.cursor != nil
+            #expect(pages == [["V10:1:5"], ["V10:1:4"]])
+
+            if let identifier = Mail.Message.Identifier("V10:1:4") {
+                let content = try await store.content(for: identifier)
+                #expect(content.mediaType == "text/plain")
+                #expect(content.body == "Amount due: 42 €")
+                #expect(content.attachmentFilenames == ["invoice.pdf"])
             }
-            #expect(content.mediaType == "text/plain")
-            #expect(content.body == "Amount due: 42 €")
-            #expect(content.attachmentFilenames == ["invoice.pdf"])
-            #expect(content.messageID == "invoice@example.com")
+
+            if let identifier = Mail.Message.Identifier("V10:1:4") {
+                let size = try await store.readMessage(identifier) { file in
+                    file.data.count
+                }
+                #expect(size > 0)
+            }
+
+            let (mailboxes, unread) = try await store.withSnapshot { snapshot in
+                let mailboxes = try snapshot.mailboxes()
+                let inbox = mailboxes.first { $0.name == "INBOX" }
+                return (mailboxes, try snapshot.search(.init(mailboxID: inbox?.id, isRead: false)))
+            }
+            #expect(mailboxes.map(\.id) == [2, 1])
+            #expect(unread.records.map(\.id.rowID) == [4, 3, 1])
+            #expect(unread.indexedMessageCount == 5)
+
+            let search = Task {
+                try await store.search(.init(sender: "example.com"))
+            }
+            search.cancel()
+            // The search can finish before the cancellation arrives.
+            do {
+                #expect(try await search.value.records.count == 5)
+            } catch is CancellationError {}
+            #expect(try await store.mailboxes().count == 2)
         }
     }
 }

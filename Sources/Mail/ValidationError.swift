@@ -5,8 +5,6 @@ extension Message.FetchRequest {
     public enum ValidationError: LocalizedError, Hashable {
         /// The limit is not in the range from 1 through ``Message/FetchRequest/maximumLimit``.
         case limitOutOfRange
-        /// The offset is negative.
-        case negativeOffset
         /// The start date is not earlier than the end date.
         case invalidDateRange
 
@@ -17,8 +15,6 @@ extension Message.FetchRequest {
             switch self {
             case .limitOutOfRange:
                 return "The limit must be from 1 through \(Message.FetchRequest.maximumLimit)."
-            case .negativeOffset:
-                return "The offset must not be negative."
             case .invalidDateRange:
                 return "The start date must be earlier than the end date."
             }
@@ -26,13 +22,15 @@ extension Message.FetchRequest {
     }
 }
 
-extension Database.Configuration {
+extension Store.Configuration {
     /// An error that describes an invalid connection configuration.
     public enum ValidationError: LocalizedError, Hashable {
         /// The time limit for each SQL statement is not positive.
         case invalidQueryTimeLimit
         /// The maximum number of connections is not positive.
         case invalidMaximumConnections
+        /// The time limit for a snapshot is not positive.
+        case invalidSnapshotTimeLimit
 
         /// English text that describes the error.
         ///
@@ -43,6 +41,8 @@ extension Database.Configuration {
                 return "The query time limit must be positive."
             case .invalidMaximumConnections:
                 return "The maximum number of connections must be positive."
+            case .invalidSnapshotTimeLimit:
+                return "The snapshot time limit must be positive."
             }
         }
     }
