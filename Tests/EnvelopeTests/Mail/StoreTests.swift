@@ -134,6 +134,28 @@ extension MailTests {
             #expect(order.values == ["first", "second"])
         }
 
+        @Test("Location does not wait for a running operation")
+        func locationDoesNotWait() async throws {
+            let mailStore = try Store(root: store.root)
+            let oneID = try #require(Message.Identifier("V10:1:1"))
+            let (entered, started) = AsyncStream<Void>.makeStream()
+            // Only the store's dispatch queue waits on this semaphore, never an async task.
+            let release = DispatchSemaphore(value: 0)
+            defer { release.signal() }
+            let running = Task {
+                try await mailStore.readMessage(oneID) { _ in
+                    started.yield()
+                    _ = release.wait(timeout: .now() + 5)
+                }
+            }
+            for await _ in entered { break }
+            let start = ContinuousClock.now
+            #expect(try mailStore.location().versionURL.lastPathComponent == "V10")
+            #expect(start.duration(to: .now) < .seconds(1))
+            release.signal()
+            try await running.value
+        }
+
         @Test("A snapshot reads one transaction and is not valid after its closure returns")
         func snapshotScope() async throws {
             nonisolated(unsafe) let writer = store

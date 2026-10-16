@@ -198,12 +198,16 @@ public actor Store {
     }
 
     /// Finds the newest store and its index without opening a connection.
+    ///
+    /// This method reads only the folder's directory entries and symbolic links,
+    /// so it runs on the caller's thread and does not wait for other operations of the store.
+    /// It does not check that the index can be opened; ``checkAccess()`` does.
     /// - Returns: The locations of the store and its index.
     /// - Throws: ``MailError/indexNotReadable`` if the folder cannot be read,
     ///   ``MailError/indexNotFound`` if no store has an index,
     ///   ``MailError/notContained(_:)`` if a symbolic link leads outside the folder,
     ///   or `CancellationError`.
-    public func location() throws -> Location {
+    public nonisolated func location() throws -> Location {
         try Task.checkCancellation()
         return try Database.location(in: root)
     }

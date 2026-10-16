@@ -52,6 +52,8 @@ Create a `Store` for the Mail folder, such as `~/Library/Mail`, with `~` expande
 Each call finds the highest numbered `V<n>` directory with an index,
 opens a read-only connection, and closes it before it returns.
 Call `checkAccess()` after the user grants access to the folder.
+`location()` finds the store without waiting for other calls,
+so it suits a quick status check.
 
 ```swift
 import Envelope
