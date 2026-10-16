@@ -98,15 +98,13 @@ struct MIMETests {
 
     @Test(
         "Cancellation stops long scans and decodes",
-        arguments: [
-            "X: " + String(repeating: "a", count: 100_000) + "\n\nbody", "Content-Transfer-Encoding: base64\n\n" + String(repeating: "YWFh", count: 100_000),
-        ]
+        arguments: LongInput.allCases
     )
-    func cancellationDuringWork(source: String) {
+    func cancellationDuringWork(input: LongInput) {
         var checks = 0
         #expect(throws: CancellationError.self) {
             try Parser.parse(
-                Data(source.utf8),
+                Data(input.source.utf8),
                 checkCancellation: {
                     checks += 1
                     if checks == 8 { throw CancellationError() }
@@ -114,6 +112,24 @@ struct MIMETests {
             )
         }
         #expect(checks == 8)
+    }
+
+    /// A message that takes many cancellation checks to parse.
+    ///
+    /// The test arguments are cases, not the messages,
+    /// because the test log prints each argument value.
+    enum LongInput: CaseIterable {
+        /// A header with a long value.
+        case header
+        /// A long base64 body.
+        case base64
+
+        var source: String {
+            switch self {
+            case .header: "X: " + String(repeating: "a", count: 100_000) + "\n\nbody"
+            case .base64: "Content-Transfer-Encoding: base64\n\n" + String(repeating: "YWFh", count: 100_000)
+            }
+        }
     }
 }
 
