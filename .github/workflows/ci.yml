@@ -58,5 +58,8 @@ jobs:
       - name: Test
         run: swift test
 
+      # The Swift 6.2 AddressSanitizer runtime deadlocks in its own
+      # initialization on the macOS 26 runner image, before any test starts.
       - name: MIME sanitizer mutations
+        if: matrix.swift != '6.2'
         run: python3 Tools/fuzz.py --count 10000
