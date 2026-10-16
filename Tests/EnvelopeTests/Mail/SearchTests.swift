@@ -19,7 +19,7 @@ extension MailTests {
             var query = Message.FetchRequest()
             query.sender = "ALICE"
             query.subject = "%"
-            query.mailboxID = 1
+            query.mailboxID = .v10(1)
             query.startDate = Date(timeIntervalSince1970: 100)
             query.endDate = Date(timeIntervalSince1970: 200)
             query.isRead = false
@@ -178,11 +178,16 @@ extension MailTests {
         @Test("A listed mailbox identifier works as a search filter")
         func listedMailboxIdentifierWorksAsSearchFilter() throws {
             let database = try Database(root: store.root)
-            let listed = try #require(database.mailboxes().first { $0.id == 1 })
+            let listed = try #require(database.mailboxes().first { $0.id.rowID == 1 })
             let request = Message.FetchRequest(mailboxID: listed.id)
             #expect(try database.fetch(request).map(\.id.rowID) == [3, 2, 1])
             #expect(listed.name == "Inbox.mbox")
-            #expect(throws: MailError.mailboxNotFound) { try database.search(.init(mailboxID: 999)) }
+            #expect(throws: MailError.mailboxNotFound) { try database.search(.init(mailboxID: .v10(999))) }
+            // A mailbox identifier from another store names a different mailbox.
+            #expect(throws: MailError.storeChanged) {
+                try database.search(.init(mailboxID: Mailbox.ID("V9:1")))
+            }
+            #expect(listed.id.description == "V10:1")
         }
 
         @Test("Search results report the local index coverage of their scope")
@@ -190,7 +195,7 @@ extension MailTests {
             let database = try Database(root: store.root)
             // A label and home membership must count the message only once.
             try store.execute("INSERT INTO labels VALUES (1,1), (2,1)")
-            var request = Message.FetchRequest(subject: "No match", mailboxID: 1)
+            var request = Message.FetchRequest(subject: "No match", mailboxID: .v10(1))
             var result = try database.search(request)
             #expect(result.records.count == 0)
             #expect(result.indexedMessageCount == 3)
@@ -203,12 +208,12 @@ extension MailTests {
             #expect(result.indexedMessageCount == 3)
 
             try store.execute("INSERT INTO mailboxes VALUES (3, 'imap://account/Empty')")
-            result = try database.search(.init(mailboxID: 3))
+            result = try database.search(.init(mailboxID: .v10(3)))
             #expect(result.indexedMessageCount == 0)
-            #expect(result.request.mailboxID == 3)
+            #expect(result.request.mailboxID == .v10(3))
 
             try store.execute("DROP TABLE labels")
-            result = try database.search(.init(mailboxID: 1))
+            result = try database.search(.init(mailboxID: .v10(1)))
             #expect(result.indexedMessageCount == 2)
             result = try database.search(.init())
             #expect(result.indexedMessageCount == 3)
@@ -242,14 +247,14 @@ extension MailTests {
             ]
             try PropertyListSerialization.data(fromPropertyList: entries, format: .binary, options: 0).write(to: metadata)
             let mailboxes = try database.mailboxes()
-            let personal = try #require(mailboxes.first { $0.id == 1 })
-            let work = try #require(mailboxes.first { $0.id == 2 })
+            let personal = try #require(mailboxes.first { $0.id.rowID == 1 })
+            let work = try #require(mailboxes.first { $0.id.rowID == 2 })
             #expect(personal.name == work.name)
             #expect(personal.account?.email == "personal+mail@example.com")
             #expect(work.account?.email == "work@example.com")
-            #expect(mailboxes.first { $0.id == 3 }?.account?.id == third)
-            #expect(mailboxes.first { $0.id == 3 }?.account?.email == nil)
-            #expect(mailboxes.first { $0.id == 4 }?.account?.email == "personal+mail@example.com")
+            #expect(mailboxes.first { $0.id.rowID == 3 }?.account?.id == third)
+            #expect(mailboxes.first { $0.id.rowID == 3 }?.account?.email == nil)
+            #expect(mailboxes.first { $0.id.rowID == 4 }?.account?.email == "personal+mail@example.com")
 
             try Data("invalid plist".utf8).write(to: metadata)
             #expect(try database.mailboxes().allSatisfy { $0.account?.email == nil })

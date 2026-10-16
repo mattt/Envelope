@@ -222,7 +222,7 @@ extension MailTests {
         @Test("Failed operations close their connection")
         func failedOperationsClose() async throws {
             let mailStore = Store(root: store.root)
-            await #expect(throws: MailError.mailboxNotFound) { try await mailStore.search(.init(mailboxID: 999)) }
+            await #expect(throws: MailError.mailboxNotFound) { try await mailStore.search(.init(mailboxID: .v10(999))) }
             await #expect(throws: CocoaError(.featureUnsupported)) {
                 try await mailStore.withSnapshot { _ -> Int in throw CocoaError(.featureUnsupported) }
             }

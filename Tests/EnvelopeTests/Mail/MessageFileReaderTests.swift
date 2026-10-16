@@ -83,7 +83,7 @@ extension MailTests {
         func mailboxWithoutURL() throws {
             try store.execute("UPDATE mailboxes SET url = NULL WHERE ROWID = 1")
             let database = try Database(root: store.root)
-            let mailbox = try #require(database.mailboxes().first { $0.id == 1 })
+            let mailbox = try #require(database.mailboxes().first { $0.id.rowID == 1 })
             #expect(mailbox.url == nil)
             #expect(mailbox.name == nil)
             #expect(mailbox.account == nil)

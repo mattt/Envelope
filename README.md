@@ -93,8 +93,10 @@ Mailbox filters include label membership when the store has a labels table.
 
 A cursor names the last message of a page,
 so mail that arrives between requests does not shift later pages.
-Message identifiers and cursors round-trip through their string forms,
-and both fail with `MailError.storeChanged` after Mail moves to a new store.
+Mailbox identifiers, message identifiers, and cursors include the store.
+They round-trip through their string forms, such as `V10:12` for a mailbox,
+and they encode as those strings in JSON.
+After Mail moves to a new store, they fail with `MailError.storeChanged`.
 
 `SearchResult` contains the matching records, the next cursor, the request,
 and `indexedMessageCount` for the selected mailbox scope before other filters

@@ -80,7 +80,7 @@ extension MailTests {
                 let inbox = mailboxes.first { $0.name == "INBOX" }
                 return (mailboxes, try snapshot.search(.init(mailboxID: inbox?.id, isRead: false)))
             }
-            #expect(mailboxes.map(\.id) == [2, 1])
+            #expect(mailboxes.map(\.id.rowID) == [2, 1])
             #expect(unread.records.map(\.id.rowID) == [4, 3, 1])
             #expect(unread.indexedMessageCount == 5)
 

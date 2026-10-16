@@ -230,7 +230,10 @@ final class Database {
             throw MailError.storeChanged
         }
         if let mailboxID = request.mailboxID {
-            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID)]) { _ in true }
+            guard mailboxID.store == versionURL.lastPathComponent else {
+                throw MailError.storeChanged
+            }
+            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID.rowID)]) { _ in true }
             guard !exists.isEmpty else {
                 throw MailError.mailboxNotFound
             }

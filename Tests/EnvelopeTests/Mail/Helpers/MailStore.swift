@@ -88,3 +88,10 @@ extension MessageFileReader {
         }
     }
 }
+
+extension Mailbox.ID {
+    /// Returns the identifier of a mailbox in the synthetic store, `V10`.
+    static func v10(_ rowID: Int64) -> Self {
+        Self(store: "V10", rowID: rowID)
+    }
+}
