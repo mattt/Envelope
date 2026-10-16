@@ -3,24 +3,24 @@ import Foundation
 /// Resource limits for one parse.
 ///
 /// All nested entities share the limits.
-package struct Limits: Sendable {
+struct Limits: Sendable {
     /// The maximum nesting depth below the root entity, which has depth zero.
-    package var depth = 64
+    var depth = 64
     /// The maximum number of entities, including the root.
-    package var entities = 1_024
+    var entities = 1_024
     /// The maximum number of header bytes in one entity, including the line that ends the header block.
-    package var entityHeaders = 256 * 1_024
+    var entityHeaders = 256 * 1_024
     /// The maximum number of header bytes in all entities.
-    package var totalHeaders = 1_024 * 1_024
+    var totalHeaders = 1_024 * 1_024
     /// The maximum UTF-8 size of decoded header values, parameter values, and text bodies.
-    package var decoded = 64 * 1_024 * 1_024
+    var decoded = 64 * 1_024 * 1_024
 
     /// Creates the default limits.
-    package init() {}
+    init() {}
 }
 
 /// A reason that the parser cannot read an entity.
-package enum Failure: Error, Equatable {
+enum Failure: Error, Equatable {
     /// The entity does not follow the MIME syntax.
     case malformed(String)
     /// The entity uses a charset or transfer encoding that the parser does not support.
@@ -34,40 +34,40 @@ package enum Failure: Error, Equatable {
 }
 
 /// A header field with its decoded value.
-package struct Header: Sendable {
+struct Header: Sendable {
     /// The field name, as it appears in the message.
-    package let name: String
+    let name: String
     /// The unfolded value, with RFC 2047 encoded words decoded.
-    package let value: String
+    let value: String
 }
 
 /// A MIME entity and its nested entities.
-package struct Part: Sendable {
+struct Part: Sendable {
     /// The header fields, in source order.
-    package let headers: [Header]
+    let headers: [Header]
     /// The lowercased media type, such as `text/plain`.
-    package let mediaType: String
+    let mediaType: String
     /// The Content-Type parameters, by lowercased name.
-    package let parameters: [String: String]
+    let parameters: [String: String]
     /// A Boolean value that indicates whether the Content-Disposition is `attachment`.
-    package let isAttachment: Bool
+    let isAttachment: Bool
     /// The filename from the Content-Disposition, or the name from the Content-Type.
-    package let filename: String?
+    let filename: String?
     /// The byte offsets of the body in the parsed data.
     ///
     /// Offsets start at zero at the first byte of the data,
     /// even when the data is a slice with other indices.
-    package let bodyRange: Range<Int>
+    let bodyRange: Range<Int>
     /// The decoded text of a text entity that is not an attachment.
-    package let text: String?
+    let text: String?
     /// The body parts of a multipart entity, or the message of a `message/rfc822` entity.
-    package let children: [Part]
+    let children: [Part]
     /// The reason that the parser could not read this entity, if any.
-    package let failure: Failure?
+    let failure: Failure?
 
     /// Returns the value of the first header field with a name.
     /// - Parameter name: A lowercased field name.
-    package func header(_ name: String) -> String? {
+    func header(_ name: String) -> String? {
         headers.first { $0.name.lowercased() == name }?.value
     }
 }

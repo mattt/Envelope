@@ -8,8 +8,8 @@ Use synthetic fixtures only.
 Run these commands from the Envelope repository:
 
 ```sh
-swift run --package-path Tools/MIMEComparison Compare Tests/MIMETests/Fixtures/*.mime
-python3 Tools/MIMEComparison/compare.py Tests/MIMETests/Fixtures/*.mime
+swift run --package-path Tools/MIMEComparison Compare Tests/EnvelopeTests/MIME/Fixtures/*.mime
+python3 Tools/MIMEComparison/compare.py Tests/EnvelopeTests/MIME/Fixtures/*.mime
 swift test
 python3 Tools/fuzz.py --count 1000000
 ```

@@ -1,5 +1,3 @@
-import MIME
-
 extension Content {
     /// Selects the body text and its media type.
     static func select(_ part: Part) -> (body: String, mediaType: String)? {

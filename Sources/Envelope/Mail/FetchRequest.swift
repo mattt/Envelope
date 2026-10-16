@@ -15,8 +15,8 @@ extension Message {
         public var sender: String?
         /// A substring of the subject to match without regard to case.
         public var subject: String?
-        /// The row identifier of a mailbox that holds the message or applies it as a label.
-        public var mailboxID: Int64?
+        /// The identifier of a mailbox that holds the message or applies it as a label.
+        public var mailboxID: Mailbox.ID?
         /// The earliest received date to include.
         public var startDate: Date?
         /// The received date at which the range ends.
@@ -38,7 +38,7 @@ extension Message {
         /// - Parameters:
         ///   - sender: A substring of the sender address to match without regard to case.
         ///   - subject: A substring of the subject to match without regard to case.
-        ///   - mailboxID: The row identifier of a mailbox that holds the message or applies it as a label.
+        ///   - mailboxID: The identifier of a mailbox that holds the message or applies it as a label.
         ///   - startDate: The earliest received date to include.
         ///   - endDate: The received date at which the range ends.
         ///   - isRead: The read state to match, or `nil` to match both states.
@@ -47,7 +47,7 @@ extension Message {
         public init(
             sender: String? = nil,
             subject: String? = nil,
-            mailboxID: Int64? = nil,
+            mailboxID: Mailbox.ID? = nil,
             startDate: Date? = nil,
             endDate: Date? = nil,
             isRead: Bool? = nil,
@@ -118,10 +118,10 @@ extension Message {
                         (SELECT 1 FROM labels l WHERE l.message_id = m.ROWID AND l.mailbox_id = ?))
                         """
                     )
-                    bindings += [.integer(mailboxID), .integer(mailboxID)]
+                    bindings += [.integer(mailboxID.rowID), .integer(mailboxID.rowID)]
                 } else {
                     conditions.append("m.mailbox = ?")
-                    bindings.append(.integer(mailboxID))
+                    bindings.append(.integer(mailboxID.rowID))
                 }
             }
             if let startDate {

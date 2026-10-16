@@ -1,8 +1,6 @@
 import Foundation
-import MIME
+@testable import Envelope
 import Testing
-
-@testable import Emlx
 
 @Suite
 struct SelectionTests {

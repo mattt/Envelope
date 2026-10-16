@@ -12,7 +12,7 @@ import Foundation
 ///
 /// Operations run as part of the calling task.
 /// Canceling the task stops SQL statements, file lookups,
-/// and parsers that check `Task.isCancelled`, such as `Emlx.Content`.
+/// and parsers that check `Task.isCancelled`, such as `Content`.
 ///
 /// The caller must have access to the Mail folder.
 /// Keep any security scope active until each call returns or throws;
@@ -37,28 +37,27 @@ public actor Store {
         /// Searches and other single operations also read one snapshot, so the limit applies to them too.
         public let snapshotTimeLimit: Duration
 
+        /// The default limits: 100 ms for each statement, one connection, and 1 second for each snapshot.
+        public static let `default` = Configuration(
+            validQueryTimeLimit: .milliseconds(100),
+            maximumConnections: 1,
+            snapshotTimeLimit: .seconds(1)
+        )
+
         /// Creates limits for a store.
         ///
-        /// The initializer does not check the values.
-        /// ``Store/init(root:configuration:)`` throws a ``ValidationError`` for a value that is not positive.
+        /// Use ``default`` for the default limits.
         /// - Parameters:
         ///   - queryTimeLimit: The time limit for each SQL statement. The value must be positive.
         ///   - maximumConnections: The maximum number of open connections. The value must be positive.
         ///   - snapshotTimeLimit: The time limit for all the statements of one snapshot.
         ///     The value must be positive.
+        /// - Throws: A ``ValidationError`` that describes the first value that is not positive.
         public init(
-            queryTimeLimit: Duration = .milliseconds(100),
-            maximumConnections: Int = 1,
-            snapshotTimeLimit: Duration = .seconds(1)
-        ) {
-            self.queryTimeLimit = queryTimeLimit
-            self.maximumConnections = maximumConnections
-            self.snapshotTimeLimit = snapshotTimeLimit
-        }
-
-        /// Checks that the limits are positive.
-        /// - Throws: A ``ValidationError`` that describes the first invalid value.
-        func validate() throws {
+            queryTimeLimit: Duration = Configuration.default.queryTimeLimit,
+            maximumConnections: Int = Configuration.default.maximumConnections,
+            snapshotTimeLimit: Duration = Configuration.default.snapshotTimeLimit
+        ) throws {
             guard queryTimeLimit > .zero else {
                 throw ValidationError.invalidQueryTimeLimit
             }
@@ -68,6 +67,18 @@ public actor Store {
             guard snapshotTimeLimit > .zero else {
                 throw ValidationError.invalidSnapshotTimeLimit
             }
+            self.init(
+                validQueryTimeLimit: queryTimeLimit,
+                maximumConnections: maximumConnections,
+                snapshotTimeLimit: snapshotTimeLimit
+            )
+        }
+
+        /// Creates limits that are already known to be positive.
+        private init(validQueryTimeLimit: Duration, maximumConnections: Int, snapshotTimeLimit: Duration) {
+            queryTimeLimit = validQueryTimeLimit
+            self.maximumConnections = maximumConnections
+            self.snapshotTimeLimit = snapshotTimeLimit
         }
     }
 
@@ -177,9 +188,7 @@ public actor Store {
     /// - Parameters:
     ///   - root: The Mail folder, such as `~/Library/Mail`, with `~` expanded.
     ///   - configuration: The time limits and the connection limit.
-    /// - Throws: A ``Configuration/ValidationError`` if a limit is not positive.
-    public init(root: URL, configuration: Configuration = Configuration()) throws {
-        try configuration.validate()
+    public init(root: URL, configuration: Configuration = .default) {
         self.root = root
         self.configuration = configuration
     }
@@ -198,19 +207,23 @@ public actor Store {
     }
 
     /// Finds the newest store and its index without opening a connection.
+    ///
+    /// This method reads only the folder's directory entries and symbolic links,
+    /// so it runs on the caller's thread and does not wait for other operations of the store.
+    /// It does not check that the index can be opened; ``checkAccess()`` does.
     /// - Returns: The locations of the store and its index.
     /// - Throws: ``MailError/indexNotReadable`` if the folder cannot be read,
     ///   ``MailError/indexNotFound`` if no store has an index,
     ///   ``MailError/notContained(_:)`` if a symbolic link leads outside the folder,
     ///   or `CancellationError`.
-    public func location() throws -> Location {
+    public nonisolated func location() throws -> Location {
         try Task.checkCancellation()
         return try Database.location(in: root)
     }
 
     /// Returns the mailboxes in the local index.
     /// - Returns: The mailboxes, ordered by URL and row identifier.
-    /// - Throws: A ``Configuration/ValidationError``, a ``MailError``, or `CancellationError`.
+    /// - Throws: A ``MailError`` or `CancellationError`.
     public func mailboxes() throws -> [Mailbox] {
         try withSnapshot { try $0.mailboxes() }
     }
@@ -219,8 +232,7 @@ public actor Store {
     /// and the number of indexed messages in the requested scope, from one snapshot.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The messages, the count, and the request.
-    /// - Throws: A ``Message/FetchRequest/ValidationError``, a ``Configuration/ValidationError``,
-    ///   a ``MailError``, or `CancellationError`.
+    /// - Throws: A ``Message/FetchRequest/ValidationError``, a ``MailError``, or `CancellationError`.
     public func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try withSnapshot { try $0.search(request) }
     }
@@ -228,8 +240,7 @@ public actor Store {
     /// Returns the messages that match a request, without a count.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The matching messages, newest first.
-    /// - Throws: A ``Message/FetchRequest/ValidationError``, a ``Configuration/ValidationError``,
-    ///   a ``MailError``, or `CancellationError`.
+    /// - Throws: A ``Message/FetchRequest/ValidationError``, a ``MailError``, or `CancellationError`.
     public func fetch(_ request: Message.FetchRequest) throws -> [Message] {
         try withSnapshot { try $0.fetch(request) }
     }
@@ -238,7 +249,7 @@ public actor Store {
     /// - Parameter identifier: The identifier of the message.
     /// - Returns: The message.
     /// - Throws: ``MailError/storeChanged``, ``MailError/messageNotFound``,
-    ///   a ``Configuration/ValidationError``, another ``MailError``, or `CancellationError`.
+    ///   another ``MailError``, or `CancellationError`.
     public func record(for identifier: Message.Identifier) throws -> Message {
         try withSnapshot { try $0.record(for: identifier) }
     }
@@ -251,8 +262,7 @@ public actor Store {
     /// - Parameter body: A closure that queries the snapshot.
     ///   The snapshot is not valid after the closure returns.
     /// - Returns: The value that `body` returns.
-    /// - Throws: A ``Configuration/ValidationError``, a ``MailError``,
-    ///   the error that `body` throws, or `CancellationError`.
+    /// - Throws: A ``MailError``, the error that `body` throws, or `CancellationError`.
     public func withSnapshot<T: Sendable>(_ body: @Sendable (Snapshot) throws -> T) throws -> T {
         try withDatabase { database in
             try database.readTransaction {
@@ -273,7 +283,7 @@ public actor Store {
     ///   - parse: A closure that parses the file and checks that it holds the message.
     /// - Returns: The value that `parse` returns.
     /// - Throws: A ``MailError`` if the message or its file cannot be found or read,
-    ///   a ``Configuration/ValidationError``, the error that `parse` throws, or `CancellationError`.
+    ///   the error that `parse` throws, or `CancellationError`.
     public func readMessage<T: Sendable>(
         _ identifier: Message.Identifier,
         parse: @Sendable (MessageFile) throws -> T

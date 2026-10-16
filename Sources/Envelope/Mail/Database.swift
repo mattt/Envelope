@@ -80,17 +80,15 @@ final class Database {
     ///   - root: The Mail folder, such as `~/Library/Mail`.
     ///   - configuration: The time limit for statements and the connection limit.
     ///   - cancellation: A signal that stops the statements of this connection.
-    /// - Throws: A ``Configuration/ValidationError`` if a limit is not positive;
-    ///   a ``MailError`` if the store cannot be found or read,
+    /// - Throws: A ``MailError`` if the store cannot be found or read,
     ///   uses an unsupported schema or journal mode, or has too many connections;
     ///   or `CancellationError`.
     init(
         root: URL,
-        configuration: Configuration = Configuration(),
+        configuration: Configuration = .default,
         cancellation: Cancellation = Cancellation()
     ) throws {
         try cancellation.check()
-        try configuration.validate()
         let location = try Self.location(in: root)
         versionURL = location.versionURL
         indexURL = location.indexURL
@@ -232,7 +230,10 @@ final class Database {
             throw MailError.storeChanged
         }
         if let mailboxID = request.mailboxID {
-            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID)]) { _ in true }
+            guard mailboxID.store == versionURL.lastPathComponent else {
+                throw MailError.storeChanged
+            }
+            let exists = try query("SELECT 1 FROM mailboxes WHERE ROWID = ?", [.integer(mailboxID.rowID)]) { _ in true }
             guard !exists.isEmpty else {
                 throw MailError.mailboxNotFound
             }

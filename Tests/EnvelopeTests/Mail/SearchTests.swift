@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Mail
+@testable import Envelope
 
 extension MailTests {
     @Suite
@@ -14,12 +14,12 @@ extension MailTests {
 
         @Test("Search filters and pagination apply, and the live WAL is visible")
         func searchFiltersPaginationAndLiveWAL() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             #expect(try database.fetch(.init()).map(\.id.rowID) == [3, 2, 1])
-            var query = Mail.Message.FetchRequest()
+            var query = Message.FetchRequest()
             query.sender = "ALICE"
             query.subject = "%"
-            query.mailboxID = 1
+            query.mailboxID = .v10(1)
             query.startDate = Date(timeIntervalSince1970: 100)
             query.endDate = Date(timeIntervalSince1970: 200)
             query.isRead = false
@@ -43,24 +43,24 @@ extension MailTests {
         @Test(
             "Invalid requests fail validation",
             arguments: [
-                (Mail.Message.FetchRequest(limit: 0), Mail.Message.FetchRequest.ValidationError.limitOutOfRange),
-                (Mail.Message.FetchRequest(limit: Mail.Message.FetchRequest.maximumLimit + 1), .limitOutOfRange),
-                (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 200), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
-                (Mail.Message.FetchRequest(startDate: Date(timeIntervalSince1970: 300), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
+                (Message.FetchRequest(limit: 0), Message.FetchRequest.ValidationError.limitOutOfRange),
+                (Message.FetchRequest(limit: Message.FetchRequest.maximumLimit + 1), .limitOutOfRange),
+                (Message.FetchRequest(startDate: Date(timeIntervalSince1970: 200), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
+                (Message.FetchRequest(startDate: Date(timeIntervalSince1970: 300), endDate: Date(timeIntervalSince1970: 200)), .invalidDateRange),
             ]
         )
-        func invalidRequestsFailValidation(request: Mail.Message.FetchRequest, expected: Mail.Message.FetchRequest.ValidationError) throws {
-            let database = try Mail.Database(root: store.root)
+        func invalidRequestsFailValidation(request: Message.FetchRequest, expected: Message.FetchRequest.ValidationError) throws {
+            let database = try Database(root: store.root)
             #expect(throws: expected) { try database.fetch(request) }
             #expect(throws: expected) { try database.search(request) }
         }
 
         @Test("A new request uses the default limit and no filters")
         func newRequestDefaults() {
-            let request = Mail.Message.FetchRequest()
-            #expect(request.limit == Mail.Message.FetchRequest.defaultLimit)
+            let request = Message.FetchRequest()
+            #expect(request.limit == Message.FetchRequest.defaultLimit)
             #expect(request.limit == 30)
-            #expect(Mail.Message.FetchRequest.maximumLimit == 100)
+            #expect(Message.FetchRequest.maximumLimit == 100)
             #expect(request.cursor == nil)
             #expect(request.sender == nil && request.subject == nil && request.mailboxID == nil)
             #expect(request.startDate == nil && request.endDate == nil && request.isRead == nil)
@@ -70,13 +70,13 @@ extension MailTests {
         func cursorsPageWithoutGapsOrRepeats() throws {
             // Messages 4 and 5 share message 3's received date, so the row identifier breaks the tie.
             try store.execute("INSERT INTO messages VALUES (4,1,1,1,300,0,'four@example.com'), (5,2,1,1,300,0,'five@example.com')")
-            let database = try Mail.Database(root: store.root)
-            var request = Mail.Message.FetchRequest(limit: 2)
+            let database = try Database(root: store.root)
+            var request = Message.FetchRequest(limit: 2)
             var pages: [[Int64]] = []
             repeat {
                 let page = try database.search(request)
                 pages.append(page.records.map(\.id.rowID))
-                #expect(page.nextCursor == page.records.last.map(Mail.Message.FetchRequest.Cursor.init(after:)) || page.nextCursor == nil)
+                #expect(page.nextCursor == page.records.last.map(Message.FetchRequest.Cursor.init(after:)) || page.nextCursor == nil)
                 if pages.count == 1 {
                     // Mail that arrives between pages does not shift later pages.
                     try store.execute("INSERT INTO messages VALUES (6,1,1,1,600,0,'six@example.com')")
@@ -95,16 +95,16 @@ extension MailTests {
 
         @Test("Cursors round-trip through strings, and reject another store")
         func cursorStringFormAndStore() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             let page = try database.search(.init(limit: 1))
             let cursor = try #require(page.nextCursor)
             #expect(cursor.description == "V10:300.0:3")
-            #expect(Mail.Message.FetchRequest.Cursor(cursor.description) == cursor)
-            #expect(Mail.Message.FetchRequest.Cursor(after: page.records[0]) == cursor)
+            #expect(Message.FetchRequest.Cursor(cursor.description) == cursor)
+            #expect(Message.FetchRequest.Cursor(after: page.records[0]) == cursor)
             for invalid in ["", "V10:300", ":300:3", "V10:x:3", "V10:300:0", "V10:inf:3", "V10:300:3:4"] {
-                #expect(Mail.Message.FetchRequest.Cursor(invalid) == nil, "\(invalid)")
+                #expect(Message.FetchRequest.Cursor(invalid) == nil, "\(invalid)")
             }
-            let stale = Mail.Message.FetchRequest(cursor: Mail.Message.FetchRequest.Cursor("V9:300.0:3"))
+            let stale = Message.FetchRequest(cursor: Message.FetchRequest.Cursor("V9:300.0:3"))
             #expect(throws: MailError.storeChanged) { try database.fetch(stale) }
             #expect(throws: MailError.storeChanged) { try database.search(stale) }
         }
@@ -118,7 +118,7 @@ extension MailTests {
                 INSERT INTO messages VALUES (4,1,3,3,400,0,'four@example.com');
                 """
             )
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             #expect(try database.fetch(.init(subject: "école")).map(\.id.rowID) == [4])
             #expect(try database.fetch(.init(subject: "D'ÉTÉ")).map(\.id.rowID) == [4])
             #expect(try database.fetch(.init(sender: "élodie")).map(\.id.rowID) == [4])
@@ -142,12 +142,12 @@ extension MailTests {
             let formatter = ISO8601DateFormatter()
             let start = try #require(formatter.date(from: "2024-01-01T00:00:00Z"))
             let end = try #require(formatter.date(from: "2024-01-02T00:00:00Z"))
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             let record = try #require(database.fetch(.init(rowID: 5)).first)
             #expect(record.date == start)
             #expect(record.date.formatted(.iso8601) == "2024-01-01T00:00:00Z")
 
-            var request = Mail.Message.FetchRequest()
+            var request = Message.FetchRequest()
             request.startDate = start
             request.endDate = end
             #expect(try database.fetch(request).map(\.id.rowID) == [6, 5])
@@ -166,9 +166,9 @@ extension MailTests {
                 INSERT INTO messages SELECT n,1,1,1,400+n,0,'id@example.com' FROM numbers;
                 """
             )
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             #expect(try database.fetch(.init()).count == 30)
-            var request = Mail.Message.FetchRequest()
+            var request = Message.FetchRequest()
             request.limit = 100
             #expect(try database.fetch(request).count == 100)
             #expect(throws: (any Error).self) { try database.query("DELETE FROM messages") { _ in } }
@@ -177,38 +177,43 @@ extension MailTests {
 
         @Test("A listed mailbox identifier works as a search filter")
         func listedMailboxIdentifierWorksAsSearchFilter() throws {
-            let database = try Mail.Database(root: store.root)
-            let listed = try #require(database.mailboxes().first { $0.id == 1 })
-            let request = Mail.Message.FetchRequest(mailboxID: listed.id)
+            let database = try Database(root: store.root)
+            let listed = try #require(database.mailboxes().first { $0.id.rowID == 1 })
+            let request = Message.FetchRequest(mailboxID: listed.id)
             #expect(try database.fetch(request).map(\.id.rowID) == [3, 2, 1])
             #expect(listed.name == "Inbox.mbox")
-            #expect(throws: MailError.mailboxNotFound) { try database.search(.init(mailboxID: 999)) }
+            #expect(throws: MailError.mailboxNotFound) { try database.search(.init(mailboxID: .v10(999))) }
+            // A mailbox identifier from another store names a different mailbox.
+            #expect(throws: MailError.storeChanged) {
+                try database.search(.init(mailboxID: Mailbox.ID("V9:1")))
+            }
+            #expect(listed.id.description == "V10:1")
         }
 
         @Test("Search results report the local index coverage of their scope")
         func searchExplainsLocalIndexCoverage() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             // A label and home membership must count the message only once.
             try store.execute("INSERT INTO labels VALUES (1,1), (2,1)")
-            var request = Mail.Message.FetchRequest(subject: "No match", mailboxID: 1)
+            var request = Message.FetchRequest(subject: "No match", mailboxID: .v10(1))
             var result = try database.search(request)
             #expect(result.records.count == 0)
             #expect(result.indexedMessageCount == 3)
             #expect(result.request == request)
 
             request.subject = nil
-            request.cursor = Mail.Message.FetchRequest.Cursor("V10:0.0:1")
+            request.cursor = Message.FetchRequest.Cursor("V10:0.0:1")
             result = try database.search(request)
             #expect(result.records.count == 0)
             #expect(result.indexedMessageCount == 3)
 
             try store.execute("INSERT INTO mailboxes VALUES (3, 'imap://account/Empty')")
-            result = try database.search(.init(mailboxID: 3))
+            result = try database.search(.init(mailboxID: .v10(3)))
             #expect(result.indexedMessageCount == 0)
-            #expect(result.request.mailboxID == 3)
+            #expect(result.request.mailboxID == .v10(3))
 
             try store.execute("DROP TABLE labels")
-            result = try database.search(.init(mailboxID: 1))
+            result = try database.search(.init(mailboxID: .v10(1)))
             #expect(result.indexedMessageCount == 2)
             result = try database.search(.init())
             #expect(result.indexedMessageCount == 3)
@@ -227,7 +232,7 @@ extension MailTests {
                 INSERT INTO mailboxes VALUES (4, '\(store.version.appendingPathComponent(first + "/Archive.mbox").absoluteString)');
                 """
             )
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             #expect(try database.mailboxes().allSatisfy { $0.account?.email == nil })
             let metadata = store.version.appendingPathComponent("MailData/Signatures/AccountsMap.plist")
             try FileManager.default.createDirectory(
@@ -242,14 +247,14 @@ extension MailTests {
             ]
             try PropertyListSerialization.data(fromPropertyList: entries, format: .binary, options: 0).write(to: metadata)
             let mailboxes = try database.mailboxes()
-            let personal = try #require(mailboxes.first { $0.id == 1 })
-            let work = try #require(mailboxes.first { $0.id == 2 })
+            let personal = try #require(mailboxes.first { $0.id.rowID == 1 })
+            let work = try #require(mailboxes.first { $0.id.rowID == 2 })
             #expect(personal.name == work.name)
             #expect(personal.account?.email == "personal+mail@example.com")
             #expect(work.account?.email == "work@example.com")
-            #expect(mailboxes.first { $0.id == 3 }?.account?.id == third)
-            #expect(mailboxes.first { $0.id == 3 }?.account?.email == nil)
-            #expect(mailboxes.first { $0.id == 4 }?.account?.email == "personal+mail@example.com")
+            #expect(mailboxes.first { $0.id.rowID == 3 }?.account?.id == third)
+            #expect(mailboxes.first { $0.id.rowID == 3 }?.account?.email == nil)
+            #expect(mailboxes.first { $0.id.rowID == 4 }?.account?.email == "personal+mail@example.com")
 
             try Data("invalid plist".utf8).write(to: metadata)
             #expect(try database.mailboxes().allSatisfy { $0.account?.email == nil })
@@ -262,13 +267,13 @@ extension MailTests {
 
         @Test("Identifiers round-trip through strings and find their message")
         func identifierRoundTripAndLookup() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             let record = try #require(database.fetch(.init()).first)
             #expect(record.id.description == "V10:1:3")
-            #expect(Mail.Message.Identifier("V10:1:3") == record.id)
+            #expect(Message.Identifier("V10:1:3") == record.id)
             #expect(try database.record(for: record.id).id.rowID == 3)
             for invalid in ["", "V10:1", "V10:1:3:4", ":1:3", "V10:0:3", "V10:1:-3", "V10:x:3"] {
-                #expect(Mail.Message.Identifier(invalid) == nil, "\(invalid)")
+                #expect(Message.Identifier(invalid) == nil, "\(invalid)")
             }
             #expect(throws: MailError.storeChanged) {
                 try database.record(for: .init(store: "V9", mailboxID: 1, rowID: 3))

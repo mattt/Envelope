@@ -1,8 +1,6 @@
-import Emlx
+@testable import Envelope
 import Foundation
 import Testing
-
-@testable import MIME
 
 @Suite
 struct MIMETests {

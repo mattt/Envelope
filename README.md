@@ -1,14 +1,14 @@
 # Envelope
 
 Envelope reads Mail.app's local message store on macOS.
-It provides three Swift modules:
+Its one module, `Envelope`, has three parts:
 
-- `Mail` reads metadata from the live `Envelope Index` SQLite database
+- A `Store` reads metadata from the live `Envelope Index` SQLite database
   and locates `.emlx` message files.
-- `Emlx` separates an `.emlx` file's MIME payload from its trailing bytes
-  and parses readable content with an internal MIME reader.
-- `Envelope` re-exports both modules
-  and adds a method that reads a message's content and checks its identity.
+- `Content` and `Container` read `.emlx` message files
+  and parse readable content with an internal MIME reader.
+- `Store.content(for:)` connects the two:
+  it reads a message's content and checks that the file holds the message.
 
 ## Requirements
 
@@ -19,7 +19,7 @@ It provides three Swift modules:
 The caller must have access to the Mail folder.
 Envelope does not request permissions or manage security-scoped bookmarks.
 Keep any security scope active until all database and file reads finish.
-Each `Mail.Store` call finishes its database and file work before it returns or throws.
+Each `Store` call finishes its database and file work before it returns or throws.
 
 ## Installation
 
@@ -29,11 +29,11 @@ Add Envelope as a dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mattt/Envelope.git", from: "0.2.0")
+    .package(url: "https://github.com/mattt/Envelope.git", from: "0.3.0")
 ]
 ```
 
-Then add the products you need to your target's dependencies:
+Then add the product to your target's dependencies:
 
 ```swift
 targets: [
@@ -46,14 +46,14 @@ targets: [
 ]
 ```
 
-A target that reads only metadata can depend on the `Mail` product alone.
-
 ## Usage
 
-Create a `Mail.Store` for the Mail folder, such as `~/Library/Mail`, with `~` expanded.
+Create a `Store` for the Mail folder, such as `~/Library/Mail`, with `~` expanded.
 Each call finds the highest numbered `V<n>` directory with an index,
 opens a read-only connection, and closes it before it returns.
 Call `checkAccess()` after the user grants access to the folder.
+`location()` finds the store without waiting for other calls,
+so it suits a quick status check.
 
 ```swift
 import Envelope
@@ -61,7 +61,7 @@ import Foundation
 
 let root = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Mail")
-let store = try Mail.Store(root: root)
+let store = Store(root: root)
 try await store.checkAccess()
 
 for mailbox in try await store.mailboxes() {
@@ -73,7 +73,7 @@ Search with a `Message.FetchRequest`.
 Each page of results includes a cursor for the next page.
 
 ```swift
-var request = Mail.Message.FetchRequest(subject: "Invoice", limit: 50)
+var request = Message.FetchRequest(subject: "Invoice", limit: 50)
 repeat {
     let page = try await store.search(request)
     for message in page.records {
@@ -93,8 +93,10 @@ Mailbox filters include label membership when the store has a labels table.
 
 A cursor names the last message of a page,
 so mail that arrives between requests does not shift later pages.
-Message identifiers and cursors round-trip through their string forms,
-and both fail with `MailError.storeChanged` after Mail moves to a new store.
+Mailbox identifiers, message identifiers, and cursors include the store.
+They round-trip through their string forms, such as `V10:12` for a mailbox,
+and they encode as those strings in JSON.
+After Mail moves to a new store, they fail with `MailError.storeChanged`.
 
 `SearchResult` contains the matching records, the next cursor, the request,
 and `indexedMessageCount` for the selected mailbox scope before other filters
@@ -107,7 +109,7 @@ Read a message's content with its identifier:
 
 ```swift
 // An identifier round-trips through its string form, such as "V10:12:345".
-if let identifier = Mail.Message.Identifier("V10:12:345") {
+if let identifier = Message.Identifier("V10:12:345") {
     let content = try await store.content(for: identifier)
     print(content.mediaType, content.body)
 }
@@ -117,11 +119,11 @@ The store looks up the message, closes its connection,
 and then reads and parses the message file.
 `content(for:)` checks that the file's Message-ID matches the index
 whenever the index records an RFC Message-ID.
-A target that depends only on `Mail` can read the file with its own parser,
-which receives the file's bytes and the current index record:
+To read the file with another parser, use `readMessage(_:parse:)`.
+The parser receives the file's bytes and the current index record:
 
 ```swift
-if let identifier = Mail.Message.Identifier("V10:12:345") {
+if let identifier = Message.Identifier("V10:12:345") {
     let size = try await store.readMessage(identifier) { file in
         file.data.count
     }
@@ -129,16 +131,16 @@ if let identifier = Mail.Message.Identifier("V10:12:345") {
 }
 ```
 
-`Emlx.Content` returns decoded headers, a plain-text body when available,
+`Content` returns decoded headers, a plain-text body when available,
 an HTML body otherwise, attachment filenames, and the MIME Message-ID.
 HTML remains data; Envelope does not load remote content.
 A damaged part, such as an attachment with invalid parameters,
 does not hide a readable body in another part.
 When no part supplies a readable body,
 encrypted, partial, malformed, and unsupported content produces an `EmlxError`.
-`Emlx.Container` exposes the counted payload and unparsed trailing bytes.
+`Container` exposes the counted payload and unparsed trailing bytes.
 It does not require a valid trailing property list.
-The complete input to `Emlx.Content`, including trailing bytes, is limited to 32 MiB.
+The complete input to `Content`, including trailing bytes, is limited to 32 MiB.
 MIME parsing permits 64 nesting levels below the root, 1,024 entities,
 256 KiB of headers per entity, 1 MiB of total headers,
 and 64 MiB of decoded UTF-8 output.
@@ -174,7 +176,8 @@ and a store opens at most one connection at a time.
 When callers choose different limits, the smallest limit of the open connections
 and the requested connection applies to admission.
 A connection over the limit fails with `MailError.connectionLimitReached`.
-`Store.init` throws `Store.Configuration.ValidationError` for a limit that is not positive.
+`Store.Configuration.init` throws `Store.Configuration.ValidationError` for a limit that is not positive,
+and `Store.Configuration.default` holds the default limits.
 
 A store runs one operation at a time on a private dispatch queue,
 outside Swift's cooperative thread pool.
@@ -203,6 +206,50 @@ File reads check that the store matches the message,
 check folder containment, and accept regular files up to 32 MiB.
 Cached locations are hints and are checked again on every read.
 
+### Sandboxed apps and security-scoped bookmarks
+
+A sandboxed app reads the Mail folder through a security-scoped bookmark
+that the user grants, such as with an open panel.
+In a sandboxed app, `NSHomeDirectory()` returns the app's sandbox directory,
+so a path built from the app's home directory does not name the user's Mail folder.
+
+A store reads nothing when you create it,
+and each call finishes its database and file work before it returns or throws.
+So one long-lived store can serve every call,
+if access to the folder is active for the duration of each call.
+Create the store from the URL that you resolve from the bookmark:
+
+```swift
+/// Keeps one store for the Mail folder that the user chose,
+/// and makes the folder accessible for each call.
+final class MailAccess: Sendable {
+    let folder: URL
+    let store: Store
+
+    init(bookmark: Data) throws {
+        var isStale = false
+        folder = try URL(
+            resolvingBookmarkData: bookmark,
+            options: .withSecurityScope,
+            bookmarkDataIsStale: &isStale
+        )
+        store = Store(root: folder)
+    }
+
+    func run<T: Sendable>(_ operation: (Store) async throws -> T) async throws -> T {
+        let isAccessing = folder.startAccessingSecurityScopedResource()
+        defer { if isAccessing { folder.stopAccessingSecurityScopedResource() } }
+        return try await operation(store)
+    }
+}
+```
+
+If the bookmark is stale, or it resolves to a different URL later,
+save a new bookmark and create a new store from the new URL.
+Envelope's tests do not run in a sandbox,
+and they do not check a store whose root names the folder through a different URL
+than the one resolved from the bookmark.
+
 ### Development
 
 Run the fixture tests and formatter from the repository root:
@@ -226,14 +273,15 @@ No.
 It reads local metadata and message files.
 It does not fetch missing messages, change read state, compose, or send mail.
 
-### Can a metadata-only consumer avoid MIME binaries?
+### What does Envelope depend on?
 
-Yes.
-Depend on the `Mail` product instead of `Envelope`.
-The `Mail` target uses Foundation, the system SQLite3 module, and system locks.
-It has no dependency on `Emlx` or `MIME`.
-`Emlx` uses the internal `MIME` target, Foundation, and CoreFoundation.
-Envelope has no external runtime dependencies.
+Envelope uses Foundation, CoreFoundation, the system SQLite3 module, and system locks.
+It has no external runtime dependencies.
+
+### What if my code declares a type with the same name as one in Envelope?
+
+Your type takes precedence in your module.
+Qualify Envelope's type with the module name, such as `Envelope.Message` or `Envelope.MailError`.
 
 ### Is the Mail store format stable?
 

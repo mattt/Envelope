@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Mail
+@testable import Envelope
 
 extension MailTests {
     @Suite
@@ -29,9 +29,9 @@ extension MailTests {
 
         @Test(
             "Every request validation error has a description",
-            arguments: [Mail.Message.FetchRequest.ValidationError.limitOutOfRange, .invalidDateRange]
+            arguments: [Message.FetchRequest.ValidationError.limitOutOfRange, .invalidDateRange]
         )
-        func validationErrorDescription(error: Mail.Message.FetchRequest.ValidationError) throws {
+        func validationErrorDescription(error: Message.FetchRequest.ValidationError) throws {
             let description = try #require(error.errorDescription)
             #expect(!description.isEmpty)
             #expect(error.localizedDescription == description)
@@ -39,9 +39,9 @@ extension MailTests {
 
         @Test(
             "Every configuration validation error has a description",
-            arguments: [Mail.Store.Configuration.ValidationError.invalidQueryTimeLimit, .invalidMaximumConnections, .invalidSnapshotTimeLimit]
+            arguments: [Store.Configuration.ValidationError.invalidQueryTimeLimit, .invalidMaximumConnections, .invalidSnapshotTimeLimit]
         )
-        func configurationErrorDescription(error: Mail.Store.Configuration.ValidationError) throws {
+        func configurationErrorDescription(error: Store.Configuration.ValidationError) throws {
             let description = try #require(error.errorDescription)
             #expect(!description.isEmpty)
             #expect(error.localizedDescription == description)
@@ -49,7 +49,7 @@ extension MailTests {
 
         @Test("The limit error names the maximum limit")
         func limitErrorNamesMaximum() {
-            #expect(Mail.Message.FetchRequest.ValidationError.limitOutOfRange.localizedDescription.contains("\(Mail.Message.FetchRequest.maximumLimit)"))
+            #expect(Message.FetchRequest.ValidationError.limitOutOfRange.localizedDescription.contains("\(Message.FetchRequest.maximumLimit)"))
         }
     }
 }

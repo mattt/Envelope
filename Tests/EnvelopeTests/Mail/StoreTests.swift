@@ -1,12 +1,9 @@
-import Emlx
-import Envelope
+@testable import Envelope
 import Foundation
 import SQLite3
 import Testing
 
-@testable import Mail
-
-extension Mail.Store {
+extension Store {
     /// Counts without end, and calls `started` when the first row arrives.
     func countWithoutEnd(started: @Sendable () -> Void) throws -> [Int64?] {
         try withDatabase { database in
@@ -60,23 +57,23 @@ extension MailTests {
         @Test("Operations run on the store's queue as part of the calling task, after the connection closes")
         func operationsRunOnQueueInTaskAfterClose() async throws {
             let root = store.root
-            let mailStore = try Mail.Store(root: root)
-            let oneID = try #require(Mail.Message.Identifier("V10:1:1"))
+            let mailStore = Store(root: root)
+            let oneID = try #require(Message.Identifier("V10:1:1"))
             let body = try await mailStore.readMessage(oneID) { file in
                 #expect(!Thread.isMainThread)
                 #expect(String(cString: __dispatch_queue_get_label(nil)) == "me.mattt.Envelope.mail")
                 #expect(withUnsafeCurrentTask { $0 != nil })
                 // The store released admission before the parser runs.
-                let other = try Mail.Database(root: root)
+                let other = try Database(root: root)
                 other.close()
-                return try Emlx.Content(emlx: file.data, expectedMessageID: file.message.messageID).body
+                return try Content(emlx: file.data, expectedMessageID: file.message.messageID).body
             }
             #expect(body == "Body")
         }
 
         @Test("Task cancellation stops a running statement and releases the read lock")
         func taskCancellationStopsStatement() async throws {
-            let mailStore = try Mail.Store(root: store.root, configuration: .init(queryTimeLimit: .seconds(5)))
+            let mailStore = try Store(root: store.root, configuration: .init(queryTimeLimit: .seconds(5)))
             let (entered, started) = AsyncStream<Void>.makeStream()
             let task = Task { try await mailStore.countWithoutEnd { started.yield() } }
             for await _ in entered { break }
@@ -88,12 +85,12 @@ extension MailTests {
 
         @Test("The parser's default cancellation check sees the calling task")
         func parserDefaultCheckSeesTask() async throws {
-            let mailStore = try Mail.Store(root: store.root)
-            let oneID = try #require(Mail.Message.Identifier("V10:1:1"))
+            let mailStore = Store(root: store.root)
+            let oneID = try #require(Message.Identifier("V10:1:1"))
             let task = Task {
                 try await mailStore.readMessage(oneID) { file in
                     withUnsafeCurrentTask { $0?.cancel() }
-                    return try Emlx.Content(emlx: file.data).body
+                    return try Content(emlx: file.data).body
                 }
             }
             await #expect(throws: CancellationError.self) { try await task.value }
@@ -101,8 +98,8 @@ extension MailTests {
 
         @Test("Overlapping calls wait in order, and a canceled waiting call does not run")
         func overlappingCallsWait() async throws {
-            let mailStore = try Mail.Store(root: store.root)
-            let oneID = try #require(Mail.Message.Identifier("V10:1:1"))
+            let mailStore = Store(root: store.root)
+            let oneID = try #require(Message.Identifier("V10:1:1"))
             let order = Order()
             let (entered, started) = AsyncStream<Void>.makeStream()
             // Only the store's dispatch queue waits on this semaphore, never an async task.
@@ -137,11 +134,33 @@ extension MailTests {
             #expect(order.values == ["first", "second"])
         }
 
+        @Test("Location does not wait for a running operation")
+        func locationDoesNotWait() async throws {
+            let mailStore = Store(root: store.root)
+            let oneID = try #require(Message.Identifier("V10:1:1"))
+            let (entered, started) = AsyncStream<Void>.makeStream()
+            // Only the store's dispatch queue waits on this semaphore, never an async task.
+            let release = DispatchSemaphore(value: 0)
+            defer { release.signal() }
+            let running = Task {
+                try await mailStore.readMessage(oneID) { _ in
+                    started.yield()
+                    _ = release.wait(timeout: .now() + 5)
+                }
+            }
+            for await _ in entered { break }
+            let start = ContinuousClock.now
+            #expect(try mailStore.location().versionURL.lastPathComponent == "V10")
+            #expect(start.duration(to: .now) < .seconds(1))
+            release.signal()
+            try await running.value
+        }
+
         @Test("A snapshot reads one transaction and is not valid after its closure returns")
         func snapshotScope() async throws {
             nonisolated(unsafe) let writer = store
-            let mailStore = try Mail.Store(root: store.root)
-            let leak = Leak<Mail.Store.Snapshot>()
+            let mailStore = Store(root: store.root)
+            let leak = Leak<Store.Snapshot>()
             let counts = try await mailStore.withSnapshot { snapshot in
                 leak.value = snapshot
                 let before = try snapshot.fetch(.init()).count
@@ -155,31 +174,31 @@ extension MailTests {
             #expect(try await mailStore.search(.init()).indexedMessageCount == 4)
         }
 
-        @Test(
-            "The initializer rejects limits that are not positive",
-            arguments: [
-                (Mail.Store.Configuration(queryTimeLimit: .zero), Mail.Store.Configuration.ValidationError.invalidQueryTimeLimit),
-                (Mail.Store.Configuration(maximumConnections: 0), .invalidMaximumConnections),
-                (Mail.Store.Configuration(snapshotTimeLimit: .milliseconds(-1)), .invalidSnapshotTimeLimit),
-            ]
-        )
-        func initializerRejectsInvalidLimits(
-            configuration: Mail.Store.Configuration,
-            expected: Mail.Store.Configuration.ValidationError
-        ) {
-            #expect(throws: expected) { try Mail.Store(root: store.root, configuration: configuration) }
+        @Test("A configuration rejects limits that are not positive")
+        func configurationRejectsInvalidLimits() throws {
+            #expect(throws: Store.Configuration.ValidationError.invalidQueryTimeLimit) {
+                try Store.Configuration(queryTimeLimit: .zero)
+            }
+            #expect(throws: Store.Configuration.ValidationError.invalidMaximumConnections) {
+                try Store.Configuration(maximumConnections: 0)
+            }
+            #expect(throws: Store.Configuration.ValidationError.invalidSnapshotTimeLimit) {
+                try Store.Configuration(snapshotTimeLimit: .milliseconds(-1))
+            }
+            #expect(try Store.Configuration() == .default)
+            #expect(Store(root: store.root).configuration == .default)
         }
 
         @Test("An access check opens the index and reports why it cannot")
         func accessCheck() async throws {
-            let mailStore = try Mail.Store(root: store.root)
+            let mailStore = Store(root: store.root)
             let location = try await mailStore.checkAccess()
             #expect(location.versionURL == store.version.resolvingSymlinksInPath())
             #expect(location.indexURL == store.index.resolvingSymlinksInPath())
             // The check closes its connection.
-            try Mail.Database(root: store.root).close()
+            try Database(root: store.root).close()
 
-            let missing = try Mail.Store(root: store.root.appendingPathComponent("Missing"))
+            let missing = Store(root: store.root.appendingPathComponent("Missing"))
             await #expect(throws: MailError.indexNotReadable) { try await missing.checkAccess() }
             try store.execute("PRAGMA journal_mode=DELETE;")
             await #expect(throws: MailError.unsupportedJournalMode) { try await mailStore.checkAccess() }
@@ -187,7 +206,7 @@ extension MailTests {
 
         @Test("A snapshot stops at its time limit even when each statement is within its own")
         func snapshotTimeLimit() async throws {
-            let mailStore = try Mail.Store(
+            let mailStore = try Store(
                 root: store.root,
                 configuration: .init(queryTimeLimit: .seconds(5), snapshotTimeLimit: .milliseconds(50))
             )
@@ -202,16 +221,16 @@ extension MailTests {
 
         @Test("Failed operations close their connection")
         func failedOperationsClose() async throws {
-            let mailStore = try Mail.Store(root: store.root)
-            await #expect(throws: MailError.mailboxNotFound) { try await mailStore.search(.init(mailboxID: 999)) }
+            let mailStore = Store(root: store.root)
+            await #expect(throws: MailError.mailboxNotFound) { try await mailStore.search(.init(mailboxID: .v10(999))) }
             await #expect(throws: CocoaError(.featureUnsupported)) {
                 try await mailStore.withSnapshot { _ -> Int in throw CocoaError(.featureUnsupported) }
             }
             #expect(store.checkpoint() == SQLITE_OK)
-            try Mail.Database(root: store.root).close()
+            try Database(root: store.root).close()
 
             // Another connection in the process takes the only admission.
-            let other = try Mail.Database(root: store.root)
+            let other = try Database(root: store.root)
             await #expect(throws: MailError.connectionLimitReached) { try await mailStore.mailboxes() }
             other.close()
             #expect(try await mailStore.mailboxes().count == 2)
@@ -219,8 +238,8 @@ extension MailTests {
 
         @Test("An identifier from an older store is stale")
         func identifierFromOlderStore() async throws {
-            let mailStore = try Mail.Store(root: store.root)
-            let identifier = try #require(Mail.Message.Identifier("V10:1:1"))
+            let mailStore = Store(root: store.root)
+            let identifier = try #require(Message.Identifier("V10:1:1"))
             #expect(try await mailStore.record(for: identifier).id == identifier)
             let newer = store.root.appendingPathComponent("V11/MailData")
             try FileManager.default.createDirectory(at: newer, withIntermediateDirectories: true)
@@ -234,7 +253,7 @@ extension MailTests {
             arguments: [(TaskPriority.high, QOS_CLASS_USER_INITIATED), (.medium, QOS_CLASS_DEFAULT), (.low, QOS_CLASS_UTILITY)]
         )
         func operationsFollowTaskPriority(priority: TaskPriority, expected: qos_class_t) async throws {
-            let mailStore = try Mail.Store(root: store.root)
+            let mailStore = Store(root: store.root)
             // Awaiting the task's value would raise its priority to the test's,
             // so the result comes back through a continuation.
             let qos = await withCheckedContinuation { continuation in
@@ -248,8 +267,8 @@ extension MailTests {
 
         @Test("Content checks that the file holds the indexed message")
         func contentChecksIdentity() async throws {
-            let mailStore = try Mail.Store(root: store.root)
-            let identifier = try #require(Mail.Message.Identifier("V10:1:1"))
+            let mailStore = Store(root: store.root)
+            let identifier = try #require(Message.Identifier("V10:1:1"))
             #expect(try await mailStore.content(for: identifier).body == "Body")
             try store.emlx("Message-ID: <other@example.com>\nSubject: Other\n\nOther").write(
                 to: store.mailbox.appendingPathComponent("1.emlx")

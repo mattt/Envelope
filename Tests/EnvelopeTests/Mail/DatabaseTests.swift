@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 import Testing
 
-@testable import Mail
+@testable import Envelope
 
 extension MailTests {
     @Suite
@@ -16,50 +16,29 @@ extension MailTests {
         @Test("Configured connection limits apply, and closing releases admission")
         func configuredConnectionLimitsAndAdmissionRelease() throws {
             let root = store.root
-            let configuration = Mail.Database.Configuration(queryTimeLimit: .seconds(2), maximumConnections: 2)
-            let first = try Mail.Database(root: root, configuration: configuration)
-            let second = try Mail.Database(root: root, configuration: configuration)
+            let configuration = try Database.Configuration(queryTimeLimit: .seconds(2), maximumConnections: 2)
+            let first = try Database(root: root, configuration: configuration)
+            let second = try Database(root: root, configuration: configuration)
             #expect(throws: MailError.connectionLimitReached) {
-                try Mail.Database(root: root, configuration: configuration)
+                try Database(root: root, configuration: configuration)
             }
             #expect(throws: MailError.connectionLimitReached) {
-                try Mail.Database(root: root)
+                try Database(root: root)
             }
             first.close()
             first.close()
-            #expect(throws: (any Error).self) { try Mail.Database(root: root) }
+            #expect(throws: (any Error).self) { try Database(root: root) }
             second.close()
-            let exclusive = try Mail.Database(root: root)
-            #expect(throws: (any Error).self) { try Mail.Database(root: root, configuration: configuration) }
+            let exclusive = try Database(root: root)
+            #expect(throws: (any Error).self) { try Database(root: root, configuration: configuration) }
             exclusive.close()
-            let reopened = try Mail.Database(root: root, configuration: configuration)
+            let reopened = try Database(root: root, configuration: configuration)
             #expect(try reopened.fetch(.init()).count == 3)
-        }
-
-        @Test(
-            "Limits that are not positive fail before admission",
-            arguments: [
-                (Mail.Database.Configuration(queryTimeLimit: .zero), Mail.Database.Configuration.ValidationError.invalidQueryTimeLimit),
-                (Mail.Database.Configuration(queryTimeLimit: .milliseconds(-1)), .invalidQueryTimeLimit),
-                (Mail.Database.Configuration(maximumConnections: 0), .invalidMaximumConnections),
-                (Mail.Database.Configuration(maximumConnections: -1), .invalidMaximumConnections),
-            ]
-        )
-        func invalidConfigurationFailsBeforeAdmission(
-            configuration: Mail.Database.Configuration,
-            expected: Mail.Database.Configuration.ValidationError
-        ) throws {
-            #expect(throws: expected) { try Mail.Database(root: store.root, configuration: configuration) }
-            // The missing folder is not checked, because validation comes first.
-            #expect(throws: expected) {
-                try Mail.Database(root: store.root.appendingPathComponent("Missing"), configuration: configuration)
-            }
-            #expect(try Mail.Database(root: store.root).fetch(.init()).count == 3)
         }
 
         @Test("A WAL writer can commit during a read and checkpoint afterward")
         func walWriterCanCommitDuringReadAndCheckpointAfterward() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             var wroteDuringRead = false
             let ids = try database.query("SELECT ROWID FROM messages ORDER BY ROWID") { row in
                 if !wroteDuringRead {
@@ -96,7 +75,7 @@ extension MailTests {
 
             // Allow for process startup in this synthetic contention test.
             // The separate deadline test exercises the production 100 ms budget.
-            let database = try Mail.Database(root: store.root, configuration: .init(queryTimeLimit: .seconds(2)))
+            let database = try Database(root: store.root, configuration: .init(queryTimeLimit: .seconds(2)))
             var wroteDuringRead = false
             try database.query("SELECT ROWID FROM messages ORDER BY ROWID") { _ in
                 if !wroteDuringRead {
@@ -116,7 +95,7 @@ extension MailTests {
 
         @Test("The query deadline releases the read lock")
         func queryDeadlineReleasesReadLock() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             let start = ContinuousClock.now
             #expect(throws: MailError.queryTimedOut) {
                 try database.query(
@@ -136,7 +115,7 @@ extension MailTests {
 
         @Test("A throwing transform releases the read lock")
         func thrownTransformReleasesReadLock() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             #expect(throws: CocoaError(.featureUnsupported)) {
                 try database.query("SELECT ROWID FROM messages") { _ -> Int in
                     throw CocoaError(.featureUnsupported)
@@ -149,7 +128,7 @@ extension MailTests {
         func cancellationReleasesReadLockAndConnectionAdmission() async throws {
             let root = store.root
             let task = Task {
-                let database = try Mail.Database(root: root)
+                let database = try Database(root: root)
                 return try database.query("SELECT ROWID FROM messages") { row in
                     withUnsafeCurrentTask { $0?.cancel() }
                     return row.integer(0)
@@ -158,17 +137,17 @@ extension MailTests {
             // No partial results are returned.
             await #expect(throws: CancellationError.self) { try await task.value }
             #expect(store.checkpoint() == SQLITE_OK)
-            #expect(try Mail.Database(root: root).fetch(.init()).count == 3)
+            #expect(try Database(root: root).fetch(.init()).count == 3)
         }
 
         @Test("Overlapping connections are rejected, and a closed connection can reopen")
         func rejectsOverlappingConnectionsAndAllowsReopen() throws {
             let root = store.root
-            let database = try Mail.Database(root: root)
-            #expect(throws: MailError.connectionLimitReached) { try Mail.Database(root: root) }
+            let database = try Database(root: root)
+            #expect(throws: MailError.connectionLimitReached) { try Database(root: root) }
             database.close()
             database.close()
-            let reopened = try Mail.Database(root: root)
+            let reopened = try Database(root: root)
             #expect(try reopened.fetch(.init()).count == 3)
             #expect(throws: MailError.connectionClosed) { try database.fetch(.init()) }
         }
@@ -178,10 +157,10 @@ extension MailTests {
             try store.execute("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE messages SET read=1;")
             defer { try? store.execute("ROLLBACK; PRAGMA locking_mode=NORMAL;") }
             let start = ContinuousClock.now
-            #expect(throws: MailError.databaseBusy) { try Mail.Database(root: store.root) }
+            #expect(throws: MailError.databaseBusy) { try Database(root: store.root) }
             #expect(start.duration(to: .now) < .milliseconds(500))
             try store.execute("ROLLBACK; PRAGMA locking_mode=NORMAL; SELECT * FROM messages;")
-            #expect(try Mail.Database(root: store.root).fetch(.init()).count == 3)
+            #expect(try Database(root: store.root).fetch(.init()).count == 3)
         }
 
         @Test("An unreadable index is not reported as a schema error")
@@ -192,14 +171,14 @@ extension MailTests {
                 try? FileManager.default.removeItem(atPath: index.path + suffix)
             }
             try Data(repeating: 0x41, count: 8_192).write(to: index)
-            #expect(throws: MailError.indexNotReadable) { try Mail.Database(root: store.root) }
-            #expect(try Mail.Database.location(in: store.root).indexURL.lastPathComponent == "Envelope Index")
+            #expect(throws: MailError.indexNotReadable) { try Database(root: store.root) }
+            #expect(try Database.location(in: store.root).indexURL.lastPathComponent == "Envelope Index")
         }
 
         @Test("A rollback journal is rejected and left unchanged")
         func rejectsRollbackJournalWithoutChangingIt() throws {
             try store.execute("PRAGMA journal_mode=DELETE;")
-            #expect(throws: MailError.unsupportedJournalMode) { try Mail.Database(root: store.root) }
+            #expect(throws: MailError.unsupportedJournalMode) { try Database(root: store.root) }
             var statement: OpaquePointer?
             #expect(sqlite3_prepare_v2(store.writer, "PRAGMA journal_mode", -1, &statement, nil) == SQLITE_OK)
             defer { sqlite3_finalize(statement) }
@@ -210,7 +189,7 @@ extension MailTests {
 
         @Test("A read transaction uses one snapshot and releases it")
         func readTransactionUsesOneSnapshotAndReleasesIt() throws {
-            let database = try Mail.Database(root: store.root)
+            let database = try Database(root: store.root)
             let counts = try database.readTransaction {
                 let before = try database.query("SELECT count(*) FROM messages") { $0.integer(0) }
                 try store.execute("INSERT INTO messages VALUES(4,1,1,1,400,0,'four@example.com')")
@@ -235,9 +214,9 @@ extension MailTests {
                 at: store.root.appendingPathComponent("V99"),
                 withIntermediateDirectories: true
             )
-            #expect(try Mail.Database(root: store.root).versionURL.lastPathComponent == "V10")
+            #expect(try Database(root: store.root).versionURL.lastPathComponent == "V10")
             try store.execute("DROP TABLE subjects")
-            #expect(throws: MailError.unsupportedSchema) { try Mail.Database(root: store.root) }
+            #expect(throws: MailError.unsupportedSchema) { try Database(root: store.root) }
         }
     }
 }
