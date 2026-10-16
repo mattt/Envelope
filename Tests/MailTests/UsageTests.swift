@@ -45,12 +45,10 @@ extension MailTests {
             let worker = Mail.Worker()
 
             let result = try await worker.run { cancellation in
-                let database = try Mail.Database(root: root, cancellation: cancellation)
-                defer { database.close() }
-
-                let mailboxes = try database.mailboxes()
-                let mailboxID = mailboxes.first?.id
-                return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
+                try Mail.Database.read(root: root, cancellation: cancellation) { database in
+                    let mailboxID = try database.mailboxes().first?.id
+                    return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
+                }
             }
             #expect(result.records.map(\.id.description) == ["V10:1:4"])
             #expect(result.records.first?.subject == "Invoice 42")
@@ -59,16 +57,10 @@ extension MailTests {
             let reader = Mail.MessageFileReader()
             let identifier = try #require(result.records.first?.id)
             let content = try await worker.run { cancellation in
-                let database = try Mail.Database(root: root, cancellation: cancellation)
-                defer { database.close() }
-                let record = try database.record(for: identifier)
-                database.close()
-
-                return try reader.read(
-                    record,
-                    version: database.versionURL,
-                    cancellation: cancellation
-                ) { data in
+                let record = try Mail.Database.read(root: root, cancellation: cancellation) { database in
+                    try database.record(for: identifier)
+                }
+                return try reader.read(record, root: root, cancellation: cancellation) { data in
                     try Emlx.Content(
                         emlx: data,
                         expectedMessageID: record.messageID,

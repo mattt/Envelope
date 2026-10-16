@@ -213,6 +213,33 @@ public final class Database {
         close()
     }
 
+    /// Opens a read-only connection to the newest store in a Mail folder,
+    /// runs a closure in one read transaction, and closes the connection.
+    ///
+    /// Every query in `body` reads the same snapshot of the index.
+    /// The connection closes before this method returns or throws,
+    /// so the caller can read message files afterward without holding a connection.
+    /// Do not keep `database` after `body` returns;
+    /// its queries then throw ``MailError/connectionClosed``.
+    /// - Parameters:
+    ///   - root: The Mail folder, such as `~/Library/Mail`.
+    ///   - configuration: The time limit for statements and the connection limit.
+    ///   - cancellation: A signal that stops the statements of this connection.
+    ///   - body: A closure that queries the database.
+    /// - Returns: The value that `body` returns.
+    /// - Throws: The errors that ``init(root:configuration:cancellation:)`` throws,
+    ///   or the error that `body` throws.
+    public static func read<T>(
+        root: URL,
+        configuration: Configuration = Configuration(),
+        cancellation: Cancellation = Cancellation(),
+        _ body: (Database) throws -> T
+    ) throws -> T {
+        let database = try Database(root: root, configuration: configuration, cancellation: cancellation)
+        defer { database.close() }
+        return try database.readTransaction { try body(database) }
+    }
+
     /// Closes the connection.
     ///
     /// Call this method before the security scope of the Mail folder ends.
@@ -313,6 +340,10 @@ public final class Database {
     /// The transaction ends even if the time limit has passed or the work is canceled,
     /// because an open read transaction delays WAL checkpoints.
     func readTransaction<T>(_ body: () throws -> T) throws -> T {
+        // A scoped read already holds a transaction; its statements share it.
+        if let connection, sqlite3_get_autocommit(connection) == 0 {
+            return try body()
+        }
         try query("BEGIN") { _ in }
         defer {
             if let connection, sqlite3_get_autocommit(connection) == 0 {
