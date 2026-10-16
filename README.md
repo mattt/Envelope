@@ -1,12 +1,14 @@
 # Envelope
 
 Envelope reads Mail.app's local message store on macOS.
-It provides two Swift modules:
+It provides three Swift modules:
 
 - `Mail` reads metadata from the live `Envelope Index` SQLite database
   and locates `.emlx` message files.
 - `Emlx` separates an `.emlx` file's MIME payload from its trailing bytes
   and parses readable content with an internal MIME reader.
+- `Envelope` re-exports both modules
+  and adds a method that reads a message's content and checks its identity.
 
 ## Requirements
 
@@ -17,6 +19,7 @@ It provides two Swift modules:
 The caller must have access to the Mail folder.
 Envelope does not request permissions or manage security-scoped bookmarks.
 Keep any security scope active until all database and file reads finish.
+Each `Mail.Store` call finishes its database and file work before it returns or throws.
 
 ## Installation
 
@@ -26,7 +29,7 @@ Add Envelope as a dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mattt/Envelope.git", from: "0.1.0")
+    .package(url: "https://github.com/mattt/Envelope.git", from: "0.2.0")
 ]
 ```
 
@@ -37,41 +40,47 @@ targets: [
     .target(
         name: "YourTarget",
         dependencies: [
-            .product(name: "Mail", package: "Envelope"),
-            .product(name: "Emlx", package: "Envelope"),
+            .product(name: "Envelope", package: "Envelope")
         ]
     )
 ]
 ```
 
-A target that reads only metadata can depend on `Mail` alone.
+A target that reads only metadata can depend on the `Mail` product alone.
 
 ## Usage
 
-Use `Mail.Database.read` for metadata reads.
-Pass the Mail root folder, such as `~/Library/Mail`, with `~` expanded.
-Envelope discovers the highest numbered `V<n>` directory with an index.
-The closure's queries read one snapshot of the index,
-and the connection closes when the closure returns or throws.
+Create a `Mail.Store` for the Mail folder, such as `~/Library/Mail`, with `~` expanded.
+Each call finds the highest numbered `V<n>` directory with an index,
+opens a read-only connection, and closes it before it returns.
+Call `checkAccess()` after the user grants access to the folder.
 
 ```swift
+import Envelope
 import Foundation
-import Mail
 
 let root = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Mail")
-let worker = Mail.Worker()
+let store = try Mail.Store(root: root)
+try await store.checkAccess()
 
-let result = try await worker.run { cancellation in
-    try Mail.Database.read(root: root, cancellation: cancellation) { database in
-        let mailboxID = try database.mailboxes().first?.id
-        return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
+for mailbox in try await store.mailboxes() {
+    print(mailbox.id, mailbox.name ?? "", mailbox.account?.email ?? "")
+}
+```
+
+Search with a `Message.FetchRequest`.
+Each page of results includes a cursor for the next page.
+
+```swift
+var request = Mail.Message.FetchRequest(subject: "Invoice", limit: 50)
+repeat {
+    let page = try await store.search(request)
+    for message in page.records {
+        print(message.id, message.date, message.subject ?? "")
     }
-}
-
-for message in result.records {
-    print(message.id, message.subject ?? "")
-}
+    request.cursor = page.nextCursor
+} while request.cursor != nil
 ```
 
 Filters combine with AND.
@@ -82,36 +91,41 @@ Results sort by received date and row identifier, newest first.
 The default limit is 30; the maximum is 100.
 Mailbox filters include label membership when the store has a labels table.
 
-`SearchResult` contains the matching records, the request,
+A cursor names the last message of a page,
+so mail that arrives between requests does not shift later pages.
+Message identifiers and cursors round-trip through their string forms,
+and both fail with `MailError.storeChanged` after Mail moves to a new store.
+
+`SearchResult` contains the matching records, the next cursor, the request,
 and `indexedMessageCount` for the selected mailbox scope before other filters
 and pagination.
 The records and the count come from one snapshot of the index.
 This count does not describe server contents or account sync status.
 A zero count can mean an empty mailbox or incomplete local indexing.
 
-Read message files after the scoped read returns, so that no connection stays open
-while files are read and parsed.
-The parsing closure lets `Mail` locate and cache files without depending on MIME.
-Pass the indexed Message-ID to `Emlx.Content` to check file identity.
+Read a message's content with its identifier:
 
 ```swift
-import Emlx
-
-let reader = Mail.MessageFileReader()
-if let identifier = result.records.first?.id {
-    let content = try await worker.run { cancellation in
-        let record = try Mail.Database.read(root: root, cancellation: cancellation) { database in
-            try database.record(for: identifier)
-        }
-        return try reader.read(record, root: root, cancellation: cancellation) { data in
-            try Emlx.Content(
-                emlx: data,
-                expectedMessageID: record.messageID,
-                checkCancellation: cancellation.check
-            )
-        }
-    }
+// An identifier round-trips through its string form, such as "V10:12:345".
+if let identifier = Mail.Message.Identifier("V10:12:345") {
+    let content = try await store.content(for: identifier)
     print(content.mediaType, content.body)
+}
+```
+
+The store looks up the message, closes its connection,
+and then reads and parses the message file.
+`content(for:)` checks that the file's Message-ID matches the index
+whenever the index records an RFC Message-ID.
+A target that depends only on `Mail` can read the file with its own parser,
+which receives the file's bytes and the current index record:
+
+```swift
+if let identifier = Mail.Message.Identifier("V10:12:345") {
+    let size = try await store.readMessage(identifier) { file in
+        file.data.count
+    }
+    print(size)
 }
 ```
 
@@ -132,32 +146,55 @@ Resource failures use `unsupportedMessage`.
 See the [behavior specification](Documentation/MIME.md) for body selection,
 strict decoding, recovery rules, and verification tooling.
 
+Run several queries in one snapshot of the index with `withSnapshot`.
+The snapshot is valid only inside its closure.
+
+```swift
+let (mailboxes, unread) = try await store.withSnapshot { snapshot in
+    let mailboxes = try snapshot.mailboxes()
+    let inbox = mailboxes.first { $0.name == "INBOX" }
+    return (mailboxes, try snapshot.search(.init(mailboxID: inbox?.id, isRead: false)))
+}
+print(mailboxes.count, unread.indexedMessageCount, unread.records.count)
+```
+
 ### Limits and cancellation
 
 The database opens read-only and requires WAL journal mode.
 Envelope does not copy the database, change its journal mode, or run checkpoints.
 SQLite lock conflicts fail immediately with `MailError.databaseBusy`, without a retry.
-Each statement has a cooperative 100 ms deadline by default.
+Each statement has a cooperative 100 ms deadline by default,
+and the statements of one snapshot share a 1 second deadline by default.
 An active read can still delay a WAL checkpoint.
-A scoped read holds its read transaction until the closure returns,
-so keep the closure short.
-The deadline cannot interrupt blocked filesystem I/O.
+The deadlines cannot interrupt blocked filesystem I/O.
 
-`Database.Configuration` makes the statement budget and connection limit explicit.
-The default is one open connection per process.
+`Store.Configuration` sets the statement and snapshot deadlines and the connection limit.
+The default is one open connection per process,
+and a store opens at most one connection at a time.
 When callers choose different limits, the smallest limit of the open connections
 and the requested connection applies to admission.
 A connection over the limit fails with `MailError.connectionLimitReached`.
-A time limit or connection limit that is not positive
-fails with `Database.Configuration.ValidationError`.
-Use each database on one thread at a time,
-and do not keep the database from a scoped read after its closure returns.
+`Store.init` throws `Store.Configuration.ValidationError` for a limit that is not positive.
 
-`Mail.Worker` runs one blocking operation at a time on a dispatch queue.
-Overlapping calls fail immediately with `MailError.operationInProgress`,
-including during file reads.
-Its cancellation signal reaches synchronous database and file operations.
-Pass `cancellation.check` to `Emlx.Content` to extend that signal through parsing.
+A store runs one operation at a time on a private dispatch queue,
+outside Swift's cooperative thread pool.
+Overlapping calls wait their turn; Swift does not guarantee their order.
+On macOS 14 and later, each operation runs at the priority of the calling task.
+Operations run as part of the calling task, so canceling the task
+stops SQL statements, file lookups, and MIME parsing:
+
+```swift
+let search = Task {
+    try await store.search(.init(sender: "example.com"))
+}
+search.cancel()
+do {
+    print(try await search.value.records.count)
+} catch is CancellationError {
+    print("The search stopped and closed its connection.")
+}
+```
+
 The MIME reader checks cancellation while scanning and decoding,
 and before and after platform charset conversion.
 Filesystem calls and platform conversion can delay cancellation.
@@ -165,8 +202,6 @@ Filesystem calls and platform conversion can delay cancellation.
 File reads check that the store matches the message,
 check folder containment, and accept regular files up to 32 MiB.
 Cached locations are hints and are checked again on every read.
-The parser closure is responsible for checking MIME identity;
-the usage example checks it whenever the index contains an RFC Message-ID.
 
 ### Development
 
@@ -194,6 +229,7 @@ It does not fetch missing messages, change read state, compose, or send mail.
 ### Can a metadata-only consumer avoid MIME binaries?
 
 Yes.
+Depend on the `Mail` product instead of `Envelope`.
 The `Mail` target uses Foundation, the system SQLite3 module, and system locks.
 It has no dependency on `Emlx` or `MIME`.
 `Emlx` uses the internal `MIME` target, Foundation, and CoreFoundation.
