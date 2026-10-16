@@ -63,6 +63,31 @@ public final class MessageFileReader: Sendable {
         return content
     }
 
+    /// Reads the file of a message in the newest store of a Mail folder, and parses its data.
+    ///
+    /// The reader finds the store as ``Database/read(root:configuration:cancellation:_:)`` does.
+    /// If the parse closure throws for a cached location,
+    /// the reader finds the file again and calls the closure again.
+    /// - Parameters:
+    ///   - message: The message to read.
+    ///   - root: The Mail folder, such as `~/Library/Mail`.
+    ///   - cancellation: A signal that stops the read.
+    ///   - parse: A closure that parses the file data and checks that it holds the message.
+    /// - Returns: The value that `parse` returns.
+    /// - Throws: ``MailError/storeChanged`` if the newest store is not the message's store,
+    ///   another ``MailError`` if the store or the file cannot be found or read,
+    ///   the error that `parse` throws, or `CancellationError`.
+    public func read<T>(
+        _ message: Message,
+        root: URL,
+        cancellation: Cancellation = Cancellation(),
+        parse: (Data) throws -> T
+    ) throws -> T {
+        try cancellation.check()
+        let location = try Database.location(in: root)
+        return try read(message, version: location.versionURL, cancellation: cancellation, parse: parse)
+    }
+
     /// Returns the `.mbox` folder in a store for the URL of a mailbox.
     /// - Parameters:
     ///   - mailboxURL: The URL string that Mail records for the mailbox.
