@@ -41,7 +41,7 @@ command = [
 def save_regression():
     if current.exists():
         data = current.read_bytes()
-        directory = root / "Tests/MIMETests/Fixtures/Regressions"
+        directory = root / "Tests/EnvelopeTests/MIME/Fixtures/Regressions"
         directory.mkdir(exist_ok=True)
         path = directory / (hashlib.sha256(data).hexdigest() + ".mime")
         path.write_bytes(data)

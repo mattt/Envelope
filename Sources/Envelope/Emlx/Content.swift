@@ -1,5 +1,4 @@
 import Foundation
-import MIME
 
 /// The largest `.emlx` file that ``Content`` parses.
 let maximumInputSize = 32 * 1_024 * 1_024
@@ -55,7 +54,7 @@ public struct Content: Sendable, Hashable {
         let message: Part
         do {
             message = try Parser.parse(payload, checkCancellation: checkCancellation)
-        } catch let failure as MIME.Failure {
+        } catch let failure as Failure {
             throw Self.error(for: failure)
         }
         guard let selected = Self.select(message) else {
@@ -83,7 +82,7 @@ public struct Content: Sendable, Hashable {
     }
 
     /// Returns the public error for a parser failure.
-    private static func error(for failure: MIME.Failure) -> EmlxError {
+    private static func error(for failure: Failure) -> EmlxError {
         switch failure {
         case .malformed(let reason): return .malformedMessage(reason)
         case .unsupported(let reason): return .unsupportedMessage(reason)

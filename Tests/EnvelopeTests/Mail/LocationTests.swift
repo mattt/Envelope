@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Mail
+@testable import Envelope
 
 extension MailTests {
     @Suite
@@ -21,7 +21,7 @@ extension MailTests {
 
         @Test("Location returns the store and index URLs")
         func locationReturnsStoreAndIndex() throws {
-            let location = try Mail.Database.location(in: store.root)
+            let location = try Database.location(in: store.root)
             #expect(location.versionURL == store.version.resolvingSymlinksInPath())
             #expect(location.indexURL == store.index.resolvingSymlinksInPath())
         }
@@ -30,13 +30,13 @@ extension MailTests {
         func locationComparesStoreNumbersAsIntegers() throws {
             try createIndex(in: store.root.appendingPathComponent("V9"))
             try FileManager.default.createDirectory(at: store.root.appendingPathComponent("V11"), withIntermediateDirectories: true)
-            #expect(try Mail.Database.location(in: store.root).versionURL.lastPathComponent == "V10")
+            #expect(try Database.location(in: store.root).versionURL.lastPathComponent == "V10")
         }
 
         @Test("Location fails for a folder that cannot be read")
         func locationFailsForMissingFolder() throws {
             #expect(throws: MailError.indexNotReadable) {
-                try Mail.Database.location(in: store.root.appendingPathComponent("Missing"))
+                try Database.location(in: store.root.appendingPathComponent("Missing"))
             }
         }
 
@@ -46,8 +46,8 @@ extension MailTests {
             for name in ["V", "Vx", "v11", "V-1", "V+12", "V1.5", "Backup"] {
                 try createIndex(in: root.appendingPathComponent(name))
             }
-            #expect(throws: MailError.indexNotFound) { try Mail.Database.location(in: root) }
-            #expect(throws: MailError.indexNotFound) { try Mail.Database(root: root) }
+            #expect(throws: MailError.indexNotFound) { try Database.location(in: root) }
+            #expect(throws: MailError.indexNotFound) { try Database(root: root) }
         }
 
         @Test("Location rejects a store or an index outside the folder")
@@ -59,7 +59,7 @@ extension MailTests {
             let linkedStore = store.root.appendingPathComponent("LinkedStore")
             try FileManager.default.createDirectory(at: linkedStore, withIntermediateDirectories: true)
             try FileManager.default.createSymbolicLink(at: linkedStore.appendingPathComponent("V11"), withDestinationURL: outside)
-            let storeError = #expect(throws: MailError.self) { try Mail.Database.location(in: linkedStore) }
+            let storeError = #expect(throws: MailError.self) { try Database.location(in: linkedStore) }
             #expect(storeError == .notContained(outside.resolvingSymlinksInPath()))
 
             let linkedIndex = store.root.appendingPathComponent("LinkedIndex")
@@ -67,7 +67,7 @@ extension MailTests {
             try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
             let index = outside.appendingPathComponent("MailData/Envelope Index")
             try FileManager.default.createSymbolicLink(at: data.appendingPathComponent("Envelope Index"), withDestinationURL: index)
-            let indexError = #expect(throws: MailError.self) { try Mail.Database.location(in: linkedIndex) }
+            let indexError = #expect(throws: MailError.self) { try Database.location(in: linkedIndex) }
             #expect(indexError == .notContained(index.resolvingSymlinksInPath()))
         }
     }

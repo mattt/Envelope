@@ -11,45 +11,17 @@ let package = Package(
         .library(
             name: "Envelope",
             targets: ["Envelope"]
-        ),
-        .library(
-            name: "Mail",
-            targets: ["Mail"]
-        ),
-        .library(
-            name: "Emlx",
-            targets: ["Emlx"]
-        ),
+        )
     ],
     targets: [
         .target(
-            name: "Mail",
-            dependencies: []
-        ),
-        .target(
-            name: "MIME",
-            dependencies: []
-        ),
-        .target(
-            name: "Emlx",
-            dependencies: ["MIME"]
-        ),
-        .target(
             name: "Envelope",
-            dependencies: ["Mail", "Emlx"]
+            dependencies: []
         ),
         .testTarget(
-            name: "MailTests",
-            dependencies: ["Mail", "Emlx", "Envelope"]
-        ),
-        .testTarget(
-            name: "EmlxTests",
-            dependencies: ["Emlx", "MIME"]
-        ),
-        .testTarget(
-            name: "MIMETests",
-            dependencies: ["MIME", "Emlx"],
-            resources: [.copy("Fixtures")]
+            name: "EnvelopeTests",
+            dependencies: ["Envelope"],
+            resources: [.copy("MIME/Fixtures")]
         ),
     ]
 )

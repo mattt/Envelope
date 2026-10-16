@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import MIME
+@testable import Envelope
 
 @Suite
 struct MutationTests {

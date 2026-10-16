@@ -1,8 +1,6 @@
-import Emlx
+@testable import Envelope
 import Foundation
 import SQLite3
-
-@testable import Mail
 
 /// A synthetic Mail folder with one store, `V10`, and a writer connection to its index.
 ///
@@ -82,11 +80,11 @@ final class MailStore {
     }
 }
 
-extension Mail.MessageFileReader {
+extension MessageFileReader {
     /// Reads and parses a message file the way the README describes.
-    func readContent(_ record: Mail.Message, version: URL, cancellation: Mail.Cancellation = .init()) throws -> Emlx.Content {
+    func readContent(_ record: Message, version: URL, cancellation: Cancellation = .init()) throws -> Content {
         try read(record, version: version, cancellation: cancellation) {
-            try Emlx.Content(emlx: $0, expectedMessageID: record.messageID, checkCancellation: cancellation.check)
+            try Content(emlx: $0, expectedMessageID: record.messageID, checkCancellation: cancellation.check)
         }
     }
 }

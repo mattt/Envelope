@@ -1,7 +1,7 @@
 import Foundation
 
 /// Parses MIME messages.
-package enum Parser {
+enum Parser {
     /// Parses a message and its nested entities.
     ///
     /// A failure in the body of an entity, such as an unknown charset,
@@ -16,7 +16,7 @@ package enum Parser {
     /// - Throws: `Failure.limit` if the message exceeds a limit,
     ///   another `Failure` if the root header block or multipart structure is malformed,
     ///   or the error from `checkCancellation`.
-    package static func parse(
+    static func parse(
         _ data: Data,
         limits: Limits = Limits(),
         checkCancellation: () throws -> Void = {}

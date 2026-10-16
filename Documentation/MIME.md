@@ -1,7 +1,7 @@
 # MIME reader behavior
 
 The reader accepts bytes and returns ordered headers and an entity tree.
-Body selection belongs to Emlx.
+Body selection belongs to the `.emlx` reader, `Content`.
 No parser source or fixtures from another implementation are used.
 The fixtures are synthetic messages authored for this project.
 
@@ -88,7 +88,7 @@ Resource failures do not produce partial results.
 
 ## Budgets
 
-The complete Emlx input is limited to 32 MiB.
+The complete `.emlx` input to `Content` is limited to 32 MiB.
 The root is at depth zero; maximum depth is 64.
 One parse permits 1,024 entities, 256 KiB of headers per entity,
 1 MiB of total headers, and 64 MiB of decoded UTF-8 output.
@@ -101,7 +101,7 @@ conversion.
 The development harness pins MimeFoundation at
 `dcb6746729d20cf00c42ad6453b4637a075f7d0b`.
 `Tools/MIMEComparison/compare.py` uses Python's standard-library email parser.
-Run both against `Tests/MIMETests/Fixtures/*.mime`.
+Run both against `Tests/EnvelopeTests/MIME/Fixtures/*.mime`.
 The expectation manifest records the source and expected body for each fixture.
 A null body requires rejection, rather than an empty successful result.
 

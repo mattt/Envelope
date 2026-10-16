@@ -1,8 +1,6 @@
-import Envelope
+@testable import Envelope
 import Foundation
 import Testing
-
-@testable import Mail
 
 extension MailTests {
     /// Runs the README usage examples against the synthetic store.
@@ -47,7 +45,7 @@ extension MailTests {
         @Test("The README examples work")
         func readmeExamples() async throws {
             let root = store.root
-            let store = try Mail.Store(root: root)
+            let store = try Store(root: root)
             try await store.checkAccess()
 
             for mailbox in try await store.mailboxes() {
@@ -55,7 +53,7 @@ extension MailTests {
             }
 
             var pages: [[String]] = []
-            var request = Mail.Message.FetchRequest(subject: "Invoice", limit: 1)
+            var request = Message.FetchRequest(subject: "Invoice", limit: 1)
             repeat {
                 let page = try await store.search(request)
                 pages.append(page.records.map(\.id.description))
@@ -63,14 +61,14 @@ extension MailTests {
             } while request.cursor != nil
             #expect(pages == [["V10:1:5"], ["V10:1:4"]])
 
-            if let identifier = Mail.Message.Identifier("V10:1:4") {
+            if let identifier = Message.Identifier("V10:1:4") {
                 let content = try await store.content(for: identifier)
                 #expect(content.mediaType == "text/plain")
                 #expect(content.body == "Amount due: 42 €")
                 #expect(content.attachmentFilenames == ["invoice.pdf"])
             }
 
-            if let identifier = Mail.Message.Identifier("V10:1:4") {
+            if let identifier = Message.Identifier("V10:1:4") {
                 let size = try await store.readMessage(identifier) { file in
                     file.data.count
                 }

@@ -12,7 +12,7 @@ import Foundation
 ///
 /// Operations run as part of the calling task.
 /// Canceling the task stops SQL statements, file lookups,
-/// and parsers that check `Task.isCancelled`, such as `Emlx.Content`.
+/// and parsers that check `Task.isCancelled`, such as `Content`.
 ///
 /// The caller must have access to the Mail folder.
 /// Keep any security scope active until each call returns or throws;
