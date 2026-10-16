@@ -45,7 +45,7 @@ extension MailTests {
         @Test("The README examples work")
         func readmeExamples() async throws {
             let root = store.root
-            let store = try Store(root: root)
+            let store = Store(root: root)
             try await store.checkAccess()
 
             for mailbox in try await store.mailboxes() {

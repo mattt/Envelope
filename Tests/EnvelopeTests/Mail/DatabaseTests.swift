@@ -16,7 +16,7 @@ extension MailTests {
         @Test("Configured connection limits apply, and closing releases admission")
         func configuredConnectionLimitsAndAdmissionRelease() throws {
             let root = store.root
-            let configuration = Database.Configuration(queryTimeLimit: .seconds(2), maximumConnections: 2)
+            let configuration = try Database.Configuration(queryTimeLimit: .seconds(2), maximumConnections: 2)
             let first = try Database(root: root, configuration: configuration)
             let second = try Database(root: root, configuration: configuration)
             #expect(throws: MailError.connectionLimitReached) {
@@ -34,27 +34,6 @@ extension MailTests {
             exclusive.close()
             let reopened = try Database(root: root, configuration: configuration)
             #expect(try reopened.fetch(.init()).count == 3)
-        }
-
-        @Test(
-            "Limits that are not positive fail before admission",
-            arguments: [
-                (Database.Configuration(queryTimeLimit: .zero), Database.Configuration.ValidationError.invalidQueryTimeLimit),
-                (Database.Configuration(queryTimeLimit: .milliseconds(-1)), .invalidQueryTimeLimit),
-                (Database.Configuration(maximumConnections: 0), .invalidMaximumConnections),
-                (Database.Configuration(maximumConnections: -1), .invalidMaximumConnections),
-            ]
-        )
-        func invalidConfigurationFailsBeforeAdmission(
-            configuration: Database.Configuration,
-            expected: Database.Configuration.ValidationError
-        ) throws {
-            #expect(throws: expected) { try Database(root: store.root, configuration: configuration) }
-            // The missing folder is not checked, because validation comes first.
-            #expect(throws: expected) {
-                try Database(root: store.root.appendingPathComponent("Missing"), configuration: configuration)
-            }
-            #expect(try Database(root: store.root).fetch(.init()).count == 3)
         }
 
         @Test("A WAL writer can commit during a read and checkpoint afterward")

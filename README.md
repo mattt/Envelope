@@ -61,7 +61,7 @@ import Foundation
 
 let root = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Mail")
-let store = try Store(root: root)
+let store = Store(root: root)
 try await store.checkAccess()
 
 for mailbox in try await store.mailboxes() {
@@ -174,7 +174,8 @@ and a store opens at most one connection at a time.
 When callers choose different limits, the smallest limit of the open connections
 and the requested connection applies to admission.
 A connection over the limit fails with `MailError.connectionLimitReached`.
-`Store.init` throws `Store.Configuration.ValidationError` for a limit that is not positive.
+`Store.Configuration.init` throws `Store.Configuration.ValidationError` for a limit that is not positive,
+and `Store.Configuration.default` holds the default limits.
 
 A store runs one operation at a time on a private dispatch queue,
 outside Swift's cooperative thread pool.
