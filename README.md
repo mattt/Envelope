@@ -48,9 +48,11 @@ A target that reads only metadata can depend on `Mail` alone.
 
 ## Usage
 
-Use `Mail.Database` for metadata reads.
+Use `Mail.Database.read` for metadata reads.
 Pass the Mail root folder, such as `~/Library/Mail`, with `~` expanded.
 Envelope discovers the highest numbered `V<n>` directory with an index.
+The closure's queries read one snapshot of the index,
+and the connection closes when the closure returns or throws.
 
 ```swift
 import Foundation
@@ -61,12 +63,10 @@ let root = FileManager.default.homeDirectoryForCurrentUser
 let worker = Mail.Worker()
 
 let result = try await worker.run { cancellation in
-    let database = try Mail.Database(root: root, cancellation: cancellation)
-    defer { database.close() }
-
-    let mailboxes = try database.mailboxes()
-    let mailboxID = mailboxes.first?.id
-    return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
+    try Mail.Database.read(root: root, cancellation: cancellation) { database in
+        let mailboxID = try database.mailboxes().first?.id
+        return try database.search(.init(subject: "Invoice", mailboxID: mailboxID))
+    }
 }
 
 for message in result.records {
@@ -89,7 +89,8 @@ The records and the count come from one snapshot of the index.
 This count does not describe server contents or account sync status.
 A zero count can mean an empty mailbox or incomplete local indexing.
 
-Close the database before reading message files.
+Read message files after the scoped read returns, so that no connection stays open
+while files are read and parsed.
 The parsing closure lets `Mail` locate and cache files without depending on MIME.
 Pass the indexed Message-ID to `Emlx.Content` to check file identity.
 
@@ -99,16 +100,10 @@ import Emlx
 let reader = Mail.MessageFileReader()
 if let identifier = result.records.first?.id {
     let content = try await worker.run { cancellation in
-        let database = try Mail.Database(root: root, cancellation: cancellation)
-        defer { database.close() }
-        let record = try database.record(for: identifier)
-        database.close()
-
-        return try reader.read(
-            record,
-            version: database.versionURL,
-            cancellation: cancellation
-        ) { data in
+        let record = try Mail.Database.read(root: root, cancellation: cancellation) { database in
+            try database.record(for: identifier)
+        }
+        return try reader.read(record, root: root, cancellation: cancellation) { data in
             try Emlx.Content(
                 emlx: data,
                 expectedMessageID: record.messageID,
@@ -144,6 +139,8 @@ Envelope does not copy the database, change its journal mode, or run checkpoints
 SQLite lock conflicts fail immediately with `MailError.databaseBusy`, without a retry.
 Each statement has a cooperative 100 ms deadline by default.
 An active read can still delay a WAL checkpoint.
+A scoped read holds its read transaction until the closure returns,
+so keep the closure short.
 The deadline cannot interrupt blocked filesystem I/O.
 
 `Database.Configuration` makes the statement budget and connection limit explicit.
@@ -153,7 +150,8 @@ and the requested connection applies to admission.
 A connection over the limit fails with `MailError.connectionLimitReached`.
 A time limit or connection limit that is not positive
 fails with `Database.Configuration.ValidationError`.
-Use each database on one thread at a time.
+Use each database on one thread at a time,
+and do not keep the database from a scoped read after its closure returns.
 
 `Mail.Worker` runs one blocking operation at a time on a dispatch queue.
 Overlapping calls fail immediately with `MailError.operationInProgress`,
