@@ -29,7 +29,7 @@ Add Envelope as a dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mattt/Envelope.git", from: "0.2.0")
+    .package(url: "https://github.com/mattt/Envelope.git", from: "0.3.0")
 ]
 ```
 
@@ -205,6 +205,50 @@ Filesystem calls and platform conversion can delay cancellation.
 File reads check that the store matches the message,
 check folder containment, and accept regular files up to 32 MiB.
 Cached locations are hints and are checked again on every read.
+
+### Sandboxed apps and security-scoped bookmarks
+
+A sandboxed app reads the Mail folder through a security-scoped bookmark
+that the user grants, such as with an open panel.
+In a sandboxed app, `NSHomeDirectory()` returns the app's sandbox directory,
+so a path built from the app's home directory does not name the user's Mail folder.
+
+A store reads nothing when you create it,
+and each call finishes its database and file work before it returns or throws.
+So one long-lived store can serve every call,
+if access to the folder is active for the duration of each call.
+Create the store from the URL that you resolve from the bookmark:
+
+```swift
+/// Keeps one store for the Mail folder that the user chose,
+/// and makes the folder accessible for each call.
+final class MailAccess: Sendable {
+    let folder: URL
+    let store: Store
+
+    init(bookmark: Data) throws {
+        var isStale = false
+        folder = try URL(
+            resolvingBookmarkData: bookmark,
+            options: .withSecurityScope,
+            bookmarkDataIsStale: &isStale
+        )
+        store = Store(root: folder)
+    }
+
+    func run<T: Sendable>(_ operation: (Store) async throws -> T) async throws -> T {
+        let isAccessing = folder.startAccessingSecurityScopedResource()
+        defer { if isAccessing { folder.stopAccessingSecurityScopedResource() } }
+        return try await operation(store)
+    }
+}
+```
+
+If the bookmark is stale, or it resolves to a different URL later,
+save a new bookmark and create a new store from the new URL.
+Envelope's tests do not run in a sandbox,
+and they do not check a store whose root names the folder through a different URL
+than the one resolved from the bookmark.
 
 ### Development
 
