@@ -180,10 +180,12 @@ final class Database {
     /// - Returns: The mailboxes, ordered by URL and row identifier.
     /// - Throws: A ``MailError`` or `CancellationError`.
     func mailboxes() throws -> [Mailbox] {
-        let accounts = Account.load(in: versionURL)
-        return try query("SELECT ROWID, url FROM mailboxes ORDER BY url, ROWID") {
+        let accounts = Account.Map(in: versionURL)
+        let mailboxes = try query("SELECT ROWID, url FROM mailboxes ORDER BY url, ROWID") {
             try Mailbox($0, version: versionURL, accounts: accounts)
         }
+        accounts.logUnlistedAccounts(of: mailboxes)
+        return mailboxes
     }
 
     /// Returns the messages that match a request,

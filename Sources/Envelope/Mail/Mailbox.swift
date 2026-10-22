@@ -57,7 +57,7 @@ public struct Mailbox: Sendable, Hashable, Identifiable {
     }
 
     /// Reads the current row of a `mailboxes` query.
-    init(_ row: Database.Row, version: URL, accounts: [String: Account]) throws {
+    init(_ row: Database.Row, version: URL, accounts: Account.Map) throws {
         guard let rowID = row.integer(0) else {
             throw MailError.unsupportedSchema
         }
@@ -74,8 +74,6 @@ public struct Mailbox: Sendable, Hashable, Identifiable {
         } else {
             accountID = mailboxURL?.host
         }
-        account = accountID.map {
-            accounts[UUID(uuidString: $0)?.uuidString ?? $0] ?? Account(id: $0, email: nil)
-        }
+        account = accountID.map(accounts.account(for:))
     }
 }

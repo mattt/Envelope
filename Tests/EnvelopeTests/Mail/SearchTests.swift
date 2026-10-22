@@ -234,18 +234,14 @@ extension MailTests {
             )
             let database = try Database(root: store.root)
             #expect(try database.mailboxes().allSatisfy { $0.account?.email == nil })
-            let metadata = store.version.appendingPathComponent("MailData/Signatures/AccountsMap.plist")
-            try FileManager.default.createDirectory(
-                at: metadata.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            let metadata = store.accountsMap
             let entries: [String: Any] = [
                 first: ["AccountURL": "imap://personal%2Bmail%40example.com@imap.example.com/"],
-                second: ["AccountURL": "imap://work%40example.com@imap.example.com/"],
+                second: ["AccountURL": "imap://work%40example.com/"],
                 third: ["AccountURL": "imap://username@imap.example.com/"],
                 "invalid-entry": "not an account",
             ]
-            try PropertyListSerialization.data(fromPropertyList: entries, format: .binary, options: 0).write(to: metadata)
+            try store.writeAccountsMap(entries)
             let mailboxes = try database.mailboxes()
             let personal = try #require(mailboxes.first { $0.id.rowID == 1 })
             let work = try #require(mailboxes.first { $0.id.rowID == 2 })

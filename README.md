@@ -69,6 +69,22 @@ for mailbox in try await store.mailboxes() {
 }
 ```
 
+A mailbox's account address comes from the store's
+`MailData/Signatures/AccountsMap.plist`,
+which maps each account UUID to an `AccountURL`.
+IMAP accounts record the address in that URL,
+such as `imap://user%40example.com/`.
+Exchange accounts record an opaque identifier,
+so their `email` is `nil`.
+A missing or unreadable map also gives `nil` addresses, without an error.
+Envelope logs the reason with the subsystem `Envelope` and the category `Accounts`;
+account identifiers in these messages are private.
+To see the messages, run this command and then list the mailboxes:
+
+```sh
+log stream --level debug --predicate 'subsystem == "Envelope" AND category == "Accounts"'
+```
+
 Search with a `Message.FetchRequest`.
 Each page of results includes a cursor for the next page.
 
