@@ -60,6 +60,18 @@ final class MailStore {
         }
     }
 
+    /// The account map file, which the store does not have until a test writes it.
+    var accountsMap: URL { version.appendingPathComponent("MailData/Signatures/AccountsMap.plist") }
+
+    /// Writes a property list to the account map file.
+    func writeAccountsMap(_ plist: Any, format: PropertyListSerialization.PropertyListFormat = .binary) throws {
+        try FileManager.default.createDirectory(
+            at: accountsMap.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try PropertyListSerialization.data(fromPropertyList: plist, format: format, options: 0).write(to: accountsMap)
+    }
+
     /// Closes the writer connection before the test replaces the index.
     func closeWriter() {
         sqlite3_close(writer)
