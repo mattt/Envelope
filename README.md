@@ -61,7 +61,7 @@ import Foundation
 
 let root = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Mail")
-let store = Store(root: root)
+let store = Envelope.Store(root: root)
 try await store.checkAccess()
 
 for mailbox in try await store.mailboxes() {
@@ -89,7 +89,7 @@ Search with a `Message.FetchRequest`.
 Each page of results includes a cursor for the next page.
 
 ```swift
-var request = Message.FetchRequest(subject: "Invoice", limit: 50)
+var request = Envelope.Message.FetchRequest(subject: "Invoice", limit: 50)
 repeat {
     let page = try await store.search(request)
     for message in page.records {
@@ -125,7 +125,7 @@ Read a message's content with its identifier:
 
 ```swift
 // An identifier round-trips through its string form, such as "V10:12:345".
-if let identifier = Message.Identifier("V10:12:345") {
+if let identifier = Envelope.Message.Identifier("V10:12:345") {
     let content = try await store.content(for: identifier)
     print(content.mediaType, content.body)
 }
@@ -139,7 +139,7 @@ To read the file with another parser, use `readMessage(_:parse:)`.
 The parser receives the file's bytes and the current index record:
 
 ```swift
-if let identifier = Message.Identifier("V10:12:345") {
+if let identifier = Envelope.Message.Identifier("V10:12:345") {
     let size = try await store.readMessage(identifier) { file in
         file.data.count
     }
@@ -240,7 +240,7 @@ Create the store from the URL that you resolve from the bookmark:
 /// and makes the folder accessible for each call.
 final class MailAccess: Sendable {
     let folder: URL
-    let store: Store
+    let store: Envelope.Store
 
     init(bookmark: Data) throws {
         var isStale = false
@@ -249,10 +249,10 @@ final class MailAccess: Sendable {
             options: .withSecurityScope,
             bookmarkDataIsStale: &isStale
         )
-        store = Store(root: folder)
+        store = Envelope.Store(root: folder)
     }
 
-    func run<T: Sendable>(_ operation: (Store) async throws -> T) async throws -> T {
+    func run<T: Sendable>(_ operation: (Envelope.Store) async throws -> T) async throws -> T {
         let isAccessing = folder.startAccessingSecurityScopedResource()
         defer { if isAccessing { folder.stopAccessingSecurityScopedResource() } }
         return try await operation(store)
