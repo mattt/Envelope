@@ -79,12 +79,19 @@ private struct Reader {
 
         let isAttachment = disposition == "attachment"
         let bodyRange = bodyStart ..< range.upperBound
+        // Mail leaves a part's body empty when it stores the content in a separate file,
+        // and records the original length in X-Apple-Content-Length.
+        let isStoredSeparately =
+            headers.contains { $0.name.lowercased() == "x-apple-content-length" }
+            && bytes[bodyRange].allSatisfy { ASCII.isBlank($0) || $0 == ASCII.carriageReturn || $0 == ASCII.lineFeed }
         var children: [Part] = []
         var text: String?
         var failure: Failure?
         if !isAttachment && Self.isEncrypted(type, parameters: parameters) {
             failure = .encrypted
         } else if !isAttachment && type == "message/partial" {
+            failure = .partial
+        } else if isStoredSeparately {
             failure = .partial
         } else if type.hasPrefix("multipart/") {
             children = try multipart(bodyRange, type: type, parameters: parameters, encoding: encoding, depth: depth)
@@ -108,6 +115,7 @@ private struct Reader {
             bodyRange: bodyRange,
             text: text,
             children: children,
+            isStoredSeparately: isStoredSeparately,
             failure: failure
         )
     }

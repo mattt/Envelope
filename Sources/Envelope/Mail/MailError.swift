@@ -37,7 +37,12 @@ public enum MailError: LocalizedError, Hashable {
     case messageFileNotRegular
     /// Envelope cannot map the mailbox URL to a folder in the store.
     case unsupportedMailbox
-    /// Mail has downloaded only part of the message.
+    /// The mailbox has only a `.partial.emlx` file for the message.
+    ///
+    /// Envelope no longer throws this error.
+    /// It reads a `.partial.emlx` file when no complete file exists,
+    /// and ``Content`` throws ``EmlxError/partialMessage`` when the file does not include the body.
+    @available(*, deprecated, message: "Envelope reads .partial.emlx files and throws EmlxError.partialMessage when the body is missing.")
     case partialMessage
 
     /// English text that describes the error and, for some errors, what to do next.
@@ -80,7 +85,7 @@ public enum MailError: LocalizedError, Hashable {
         case .unsupportedMailbox:
             return "The mailbox storage location is not supported."
         case .partialMessage:
-            return "Mail has downloaded only part of the message. Open the message in Mail to download it."
+            return "The local message file holds only part of the message."
         }
     }
 }

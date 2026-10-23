@@ -62,6 +62,8 @@ struct Part: Sendable {
     let text: String?
     /// The body parts of a multipart entity, or the message of a `message/rfc822` entity.
     let children: [Part]
+    /// A Boolean value that indicates whether Mail stores the body in a separate file.
+    let isStoredSeparately: Bool
     /// The reason that the parser could not read this entity, if any.
     let failure: Failure?
 
@@ -84,6 +86,7 @@ extension Part {
             bodyRange: bodyRange,
             text: nil,
             children: [],
+            isStoredSeparately: false,
             failure: failure
         )
     }

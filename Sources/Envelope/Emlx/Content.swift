@@ -13,6 +13,20 @@ public struct Content: Sendable, Hashable {
         public let value: String
     }
 
+    /// A part of the message that has a filename or that Mail stores in a separate file.
+    public struct Attachment: Sendable, Hashable {
+        /// The lowercased media type, such as `image/png`.
+        public let mediaType: String
+        /// The filename from the Content-Disposition, or the name from the Content-Type, if the part has one.
+        public let filename: String?
+        /// A Boolean value that indicates whether Mail stores the part's content outside the `.emlx` file.
+        ///
+        /// Mail stores a message in a `.partial.emlx` file
+        /// when it keeps some parts, such as attachments and inline images, in separate files.
+        /// The `.emlx` file keeps the headers of these parts, but not their content.
+        public let isStoredSeparately: Bool
+    }
+
     /// The header fields of the message, in source order.
     public let headers: [Header]
     /// The decoded plain-text or HTML body.
@@ -21,10 +35,15 @@ public struct Content: Sendable, Hashable {
     ///
     /// The value is `text/plain`, or `text/html` for a message without a plain-text body.
     public let mediaType: String
-    /// The filenames that the message's parts supply, including inline parts such as images.
+    /// The parts that supply a filename, including inline parts such as images,
+    /// and the parts whose content Mail stores outside the `.emlx` file, in source order.
     ///
     /// An attached message counts as one part; the parts inside it are not included.
-    public let attachmentFilenames: [String]
+    public let attachments: [Attachment]
+    /// The filenames of ``attachments``, in source order.
+    public var attachmentFilenames: [String] {
+        attachments.compactMap(\.filename)
+    }
     /// The MIME Message-ID without angle brackets, if the message has one.
     public let messageID: String?
 
@@ -33,6 +52,7 @@ public struct Content: Sendable, Hashable {
     /// For alternative parts, the parser selects the last plain-text part,
     /// or the last HTML part if there is no plain-text part.
     /// A damaged part does not stop the parse when another part supplies the body.
+    /// A part that Mail stores separately cannot supply the body.
     /// - Parameters:
     ///   - data: The complete `.emlx` file, which must not be larger than 32 MiB.
     ///   - expectedMessageID: The Message-ID from the index.
@@ -66,7 +86,7 @@ public struct Content: Sendable, Hashable {
         headers = message.headers.map { Header(name: $0.name, value: $0.value) }
         body = selected.body
         mediaType = selected.mediaType
-        attachmentFilenames = Self.filenames(message)
+        attachments = Self.attachments(message)
         messageID = message.header("message-id").map(Self.unbracketed)
         if let expectedMessageID, expectedMessageID.contains("@") {
             guard messageID == Self.unbracketed(expectedMessageID) else {

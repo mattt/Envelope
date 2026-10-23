@@ -108,8 +108,8 @@ extension MailTests {
             }
         }
 
-        @Test("Lookup reports partial, duplicate, and oversized files")
-        func fileLookupReportsPartialDuplicateAndOversizedFiles() throws {
+        @Test("Lookup reads a partial file when no complete file exists")
+        func fileLookupReadsPartialFile() throws {
             let version = store.version
             let database = try Database(root: store.root)
             let record = try #require(database.fetch(.init(rowID: 1)).first)
@@ -117,14 +117,82 @@ extension MailTests {
             let messages = store.mailbox.appendingPathComponent("Data/1/Messages")
             try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true)
 
-            try store.emlx("Subject: Partial\n\nPart").write(to: messages.appendingPathComponent("1.partial.emlx"))
-            #expect(throws: MailError.partialMessage) {
+            let partial = messages.appendingPathComponent("1.partial.emlx")
+            try store.emlx(PartialFixtures.attachment).write(to: partial)
+            let files = MessageFileReader()
+            let content = try files.readContent(record, version: version)
+            #expect(content.body == "The report is attached.")
+            #expect(content.attachments.map(\.isStoredSeparately) == [true])
+
+            // A complete file takes precedence over a partial one, including a cached partial location.
+            try store.emlx("Message-ID: <one@example.com>\n\nComplete").write(to: messages.appendingPathComponent("1.emlx"))
+            #expect(try files.readContent(record, version: version).body == "Complete")
+            #expect(try MessageFileReader().readContent(record, version: version).body == "Complete")
+            try FileManager.default.removeItem(at: messages.appendingPathComponent("1.emlx"))
+
+            // A partial file without a body reports the missing body.
+            try store.emlx(PartialFixtures.separateBody).write(to: partial)
+            #expect(throws: EmlxError.partialMessage) {
                 try MessageFileReader().readContent(record, version: version)
             }
-            // A complete file takes precedence over a partial one.
+        }
+
+        @Test("Partial files get the duplicate, containment, and size checks of complete files")
+        func partialFileChecks() throws {
+            let version = store.version
+            let database = try Database(root: store.root)
+            let record = try #require(database.fetch(.init(rowID: 1)).first)
+            database.close()
+            let messages = store.mailbox.appendingPathComponent("Data/1/Messages")
+            let copies = store.mailbox.appendingPathComponent("Data/2/Messages")
+            for directory in [messages, copies] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            let partial = messages.appendingPathComponent("1.partial.emlx")
+            try store.emlx(PartialFixtures.attachment).write(to: partial)
+
+            try store.emlx(PartialFixtures.attachment).write(to: copies.appendingPathComponent("1.partial.emlx"))
+            #expect(throws: MailError.messageFileNotFound) {
+                try MessageFileReader().readContent(record, version: version)
+            }
+            try FileManager.default.removeItem(at: copies)
+
+            // The lookup does not follow a symbolic link to a file outside the mailbox.
+            try FileManager.default.removeItem(at: partial)
+            let other = version.appendingPathComponent("account/Other.mbox")
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            try store.emlx(PartialFixtures.attachment).write(to: other.appendingPathComponent("1.partial.emlx"))
+            try FileManager.default.createSymbolicLink(at: partial, withDestinationURL: other.appendingPathComponent("1.partial.emlx"))
+            #expect(throws: MailError.messageFileNotFound) {
+                try MessageFileReader().readContent(record, version: version)
+            }
+            try FileManager.default.removeItem(at: partial)
+
+            try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
+            #expect(throws: MailError.messageFileNotRegular) {
+                try MessageFileReader().readContent(record, version: version)
+            }
+            try FileManager.default.removeItem(at: partial)
+
+            try store.emlx(PartialFixtures.attachment).write(to: partial)
+            let handle = try FileHandle(forWritingTo: partial)
+            try handle.truncate(atOffset: 32 * 1_024 * 1_024 + 1)
+            try handle.close()
+            #expect(throws: MailError.messageFileTooLarge) {
+                try MessageFileReader().readContent(record, version: version)
+            }
+        }
+
+        @Test("Lookup reports duplicate and oversized files")
+        func fileLookupReportsDuplicateAndOversizedFiles() throws {
+            let version = store.version
+            let database = try Database(root: store.root)
+            let record = try #require(database.fetch(.init(rowID: 1)).first)
+            database.close()
+            let messages = store.mailbox.appendingPathComponent("Data/1/Messages")
+            try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true)
             let file = messages.appendingPathComponent("1.emlx")
             try store.emlx("Message-ID: <one@example.com>\n\nComplete").write(to: file)
-            #expect(try MessageFileReader().readContent(record, version: version).body == "Complete")
 
             let copies = store.mailbox.appendingPathComponent("Data/2/Messages")
             try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: true)
