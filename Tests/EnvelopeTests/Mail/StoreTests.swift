@@ -275,5 +275,17 @@ extension MailTests {
             )
             await #expect(throws: EmlxError.messageMismatch) { try await mailStore.content(for: identifier) }
         }
+
+        @Test("Content reads a partial file when the message has no complete file")
+        func contentReadsPartialFile() async throws {
+            let mailStore = Store(root: store.root)
+            let identifier = try #require(Message.Identifier("V10:1:1"))
+            try FileManager.default.removeItem(at: store.mailbox.appendingPathComponent("1.emlx"))
+            try store.emlx(PartialFixtures.inlineImages).write(to: store.mailbox.appendingPathComponent("1.partial.emlx"))
+            let content = try await mailStore.content(for: identifier)
+            #expect(content.mediaType == "text/html")
+            #expect(content.attachments.count == 2)
+            #expect(content.attachments.allSatisfy { $0.isStoredSeparately && $0.filename == nil })
+        }
     }
 }

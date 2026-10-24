@@ -2,7 +2,11 @@ import Foundation
 
 /// An error that occurs when Envelope reads an `.emlx` file.
 public enum EmlxError: LocalizedError, Hashable {
-    /// The file is shorter than its byte count, or the message is one fragment of a larger message.
+    /// The file does not include the message body.
+    ///
+    /// The file is shorter than its byte count,
+    /// the message is one fragment of a larger message,
+    /// or Mail stores the body in a separate file.
     case partialMessage
     /// The readable body is encrypted.
     case encryptedMessage

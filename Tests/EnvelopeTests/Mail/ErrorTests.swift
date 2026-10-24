@@ -12,13 +12,20 @@ extension MailTests {
                 MailError.indexNotFound, .indexNotReadable, .unsupportedSchema, .unsupportedJournalMode, .databaseBusy,
                 .connectionLimitReached, .connectionClosed, .queryTimedOut, .queryFailed("disk I/O error"),
                 .notContained(URL(fileURLWithPath: "/tmp/Outside.mbox")), .storeChanged, .mailboxNotFound, .messageNotFound,
-                .messageFileNotFound, .messageFileTooLarge, .messageFileNotRegular, .unsupportedMailbox, .partialMessage,
+                .messageFileNotFound, .messageFileTooLarge, .messageFileNotRegular, .unsupportedMailbox,
             ]
         )
         func mailErrorDescription(error: MailError) throws {
             let description = try #require(error.errorDescription)
             #expect(!description.isEmpty)
             #expect(error.localizedDescription == description)
+        }
+
+        @available(*, deprecated)
+        @Test("The deprecated partial-message error does not tell users to open Mail")
+        func partialMessageDescription() {
+            let description = MailError.partialMessage.localizedDescription
+            #expect(description == "The local message file holds only part of the message.")
         }
 
         @Test("Mail error descriptions include their associated values")

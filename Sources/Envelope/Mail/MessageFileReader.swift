@@ -6,6 +6,9 @@ private let maximumFileSize = 32 * 1024 * 1024
 
 /// Finds and reads the `.emlx` files of messages in the local Mail index.
 ///
+/// When a mailbox has no complete `.emlx` file for a message,
+/// the reader reads its `.partial.emlx` file,
+/// in which Mail omits the content of parts that it stores separately.
 /// The reader caches file locations as hints.
 /// Every read checks that the file is inside the mailbox folder,
 /// and the parse closure checks that the file holds the expected message.
@@ -44,7 +47,8 @@ final class MessageFileReader: Sendable {
         }
         let mailbox = try Self.mailboxDirectory(for: mailboxURL, in: version)
 
-        if let cached = cache.withLock({ $0[message.id] }) {
+        // A complete file replaces a partial one when Mail downloads the rest of the message.
+        if let cached = cache.withLock({ $0[message.id] }), !Self.hasCompleteFile(replacing: cached) {
             do {
                 return try load(cached, in: mailbox, version: version, cancellation: cancellation, parse: parse)
             } catch let error as CancellationError {
@@ -108,8 +112,8 @@ final class MessageFileReader: Sendable {
             throw MailError.messageFileNotFound
         }
 
-        var candidates: [URL] = []
-        var isPartial = false
+        var complete: [URL] = []
+        var partial: [URL] = []
         for case let url as URL in entries {
             try cancellation.check()
             let isSymbolicLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
@@ -121,20 +125,30 @@ final class MessageFileReader: Sendable {
 
             switch url.lastPathComponent {
             case "\(message.id.rowID).emlx":
-                candidates.append(url)
+                complete.append(url)
             case "\(message.id.rowID).partial.emlx":
-                isPartial = true
+                partial.append(url)
             default:
                 break
             }
         }
 
         try cancellation.check()
+        // A complete file takes precedence over a partial one, but duplicate files are ambiguous.
+        let candidates = complete.isEmpty ? partial : complete
         guard candidates.count == 1, let url = candidates.first else {
-            // A partial file explains a missing complete file, but not duplicate files.
-            throw candidates.isEmpty && isPartial ? MailError.partialMessage : MailError.messageFileNotFound
+            throw MailError.messageFileNotFound
         }
         return url
+    }
+
+    /// Returns whether a complete file sits beside a partial file.
+    private static func hasCompleteFile(replacing url: URL) -> Bool {
+        let name = url.lastPathComponent
+        guard name.hasSuffix(".partial.emlx") else { return false }
+        let complete = url.deletingLastPathComponent()
+            .appendingPathComponent(name.dropLast(".partial.emlx".count) + ".emlx")
+        return FileManager.default.fileExists(atPath: complete.path)
     }
 
     /// Checks a message file and parses its data.

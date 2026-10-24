@@ -27,12 +27,17 @@ extension Content {
         return nil
     }
 
-    /// Returns the filenames of a part and the parts that it contains.
-    static func filenames(_ part: Part) -> [String] {
-        var names = part.filename.map { [$0] } ?? []
+    /// Returns the attachments of a part and the parts that it contains.
+    static func attachments(_ part: Part) -> [Attachment] {
+        var attachments: [Attachment] = []
+        if part.filename != nil || part.isStoredSeparately {
+            attachments.append(
+                Attachment(mediaType: part.mediaType, filename: part.filename, isStoredSeparately: part.isStoredSeparately)
+            )
+        }
         // An attached message is one attachment, not a container of exposed files.
-        if !part.isAttachment { names += part.children.flatMap(filenames) }
-        return names
+        if !part.isAttachment { attachments += part.children.flatMap(Self.attachments) }
+        return attachments
     }
 
     /// Returns the failure that best explains a missing body.

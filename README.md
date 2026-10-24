@@ -136,7 +136,8 @@ and then reads and parses the message file.
 `content(for:)` checks that the file's Message-ID matches the index
 whenever the index records an RFC Message-ID.
 To read the file with another parser, use `readMessage(_:parse:)`.
-The parser receives the file's bytes and the current index record:
+The parser receives the file's bytes, from the partial file if no complete file exists,
+and the current index record:
 
 ```swift
 if let identifier = Envelope.Message.Identifier("V10:12:345") {
@@ -148,7 +149,7 @@ if let identifier = Envelope.Message.Identifier("V10:12:345") {
 ```
 
 `Content` returns decoded headers, a plain-text body when available,
-an HTML body otherwise, attachment filenames, and the MIME Message-ID.
+an HTML body otherwise, attachments, and the MIME Message-ID.
 HTML remains data; Envelope does not load remote content.
 A damaged part, such as an attachment with invalid parameters,
 does not hide a readable body in another part.
@@ -163,6 +164,18 @@ and 64 MiB of decoded UTF-8 output.
 Resource failures use `unsupportedMessage`.
 See the [behavior specification](Documentation/MIME.md) for body selection,
 strict decoding, recovery rules, and verification tooling.
+
+Mail stores some messages in a `.partial.emlx` file,
+which keeps the headers and the text parts
+but leaves out parts that Mail stores in separate files,
+such as attachments and inline images.
+When a mailbox has no complete `.emlx` file for a message,
+the store reads its `.partial.emlx` file,
+with the same containment and size checks as a complete file.
+Each entry in `Content.attachments` has `isStoredSeparately`,
+which tells whether the file leaves out the part's content;
+Envelope does not read the separate files.
+If the partial file does not include the body, `Content` throws `EmlxError.partialMessage`.
 
 Run several queries in one snapshot of the index with `withSnapshot`.
 The snapshot is valid only inside its closure.

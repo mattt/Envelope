@@ -114,7 +114,10 @@ public actor Store {
         ///
         /// Pass its ``Message/messageID`` to the parser to check file identity.
         public let message: Message
-        /// The complete `.emlx` file, at most 32 MiB.
+        /// The bytes of the message's `.emlx` file, at most 32 MiB.
+        ///
+        /// For a message without a complete `.emlx` file,
+        /// the bytes come from its `.partial.emlx` file.
         public let data: Data
     }
 
@@ -275,6 +278,8 @@ public actor Store {
     ///
     /// The store looks up the current record, closes its connection,
     /// and then finds and reads the message file.
+    /// When the mailbox has no complete `.emlx` file for the message,
+    /// the store reads its `.partial.emlx` file, with the same containment and size checks.
     /// File locations are cached as hints and checked again on every read.
     /// If `parse` throws for a cached location,
     /// the store finds the file again and calls `parse` again.

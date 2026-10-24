@@ -51,6 +51,12 @@ A nested entity that the reader cannot parse becomes a placeholder,
 and body selection skips it.
 Encrypted and partial entities, and text with an unknown charset or invalid bytes,
 also cannot supply a body.
+Mail stores the content of some parts, such as attachments and inline images,
+in separate files, and writes the message to a `.partial.emlx` file.
+In that file, each such part has an X-Apple-Content-Length field
+and an empty or blank body.
+The reader treats these parts as partial entities,
+and `Content` reports them as attachments that Mail stores separately.
 These failures do not affect a body in another part.
 When no part supplies a body, the message fails with the encrypted error,
 then the partial error, then the first other failure.
