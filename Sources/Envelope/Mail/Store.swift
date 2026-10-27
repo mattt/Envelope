@@ -34,6 +34,7 @@ public actor Store {
         ///
         /// A snapshot holds a read transaction, which can delay Mail's WAL checkpoints.
         /// When the limit passes, the next statement step throws ``MailError/queryTimedOut``.
+        /// A search returns its completed page with a `nil` count if only the count times out.
         /// Searches and other single operations also read one snapshot, so the limit applies to them too.
         public let snapshotTimeLimit: Duration
 
@@ -102,8 +103,10 @@ public actor Store {
         /// before the other filters and pagination apply.
         ///
         /// The count describes the local index only.
+        /// The count excludes messages whose home mailbox row is missing.
         /// A count of zero can mean an empty mailbox, or a mailbox that Mail has not indexed.
-        public let indexedMessageCount: Int
+        /// The count is `nil` if counting exceeds the statement or snapshot time limit.
+        public let indexedMessageCount: Int?
         /// The request that selected the messages.
         public let request: Message.FetchRequest
     }
@@ -142,6 +145,8 @@ public actor Store {
 
         /// Returns the messages that match a request,
         /// and the number of indexed messages in the requested scope.
+        ///
+        /// The count is `nil` if counting exceeds the statement or snapshot time limit.
         /// - Parameter request: The filters and pagination.
         /// - Returns: The messages, the count, and the request.
         /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
@@ -233,6 +238,8 @@ public actor Store {
 
     /// Returns the messages that match a request,
     /// and the number of indexed messages in the requested scope, from one snapshot.
+    ///
+    /// The count is `nil` if counting exceeds the statement or snapshot time limit.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The messages, the count, and the request.
     /// - Throws: A ``Message/FetchRequest/ValidationError``, a ``MailError``, or `CancellationError`.

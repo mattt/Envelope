@@ -192,6 +192,7 @@ final class Database {
     /// and the number of indexed messages in the requested scope.
     ///
     /// Both values come from one snapshot of the index.
+    /// The count is `nil` if it exceeds the statement or snapshot time limit.
     /// - Parameter request: The filters and pagination.
     /// - Returns: The messages, the count, and the request.
     /// - Throws: A ``Message/FetchRequest/ValidationError`` if the request is invalid,
@@ -199,14 +200,21 @@ final class Database {
     func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try readTransaction {
             let page = try fetchPage(request)
-            // Count the selected local scope without the search filters or pagination.
-            let scope = Message.FetchRequest(mailboxID: request.mailboxID)
-            let (sql, bindings) = scope.statement(matchesLabels: try hasLabels, countOnly: true)
-            let count = try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0
+            // Count messages with an indexed home mailbox in the selected scope,
+            // without other search filters or pagination.
+            let count: Int?
+            do {
+                let scope = Message.FetchRequest(mailboxID: request.mailboxID)
+                let matchesLabels = try request.mailboxID != nil && hasLabels
+                let (sql, bindings) = scope.statement(matchesLabels: matchesLabels, countOnly: true)
+                count = Int(try query(sql, bindings) { $0.integer(0) ?? 0 }.first ?? 0)
+            } catch MailError.queryTimedOut {
+                count = nil
+            }
             return SearchResult(
                 records: page.records,
                 nextCursor: page.hasMore ? page.records.last.map(Message.FetchRequest.Cursor.init(after:)) : nil,
-                indexedMessageCount: Int(count),
+                indexedMessageCount: count,
                 request: request
             )
         }

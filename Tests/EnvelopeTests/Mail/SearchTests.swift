@@ -219,6 +219,61 @@ extension MailTests {
             #expect(result.indexedMessageCount == 3)
         }
 
+        @Test("Scope counts include home and label membership once", arguments: [false, true])
+        func scopeCounts(labels: Bool) throws {
+            try store.execute("INSERT INTO mailboxes VALUES (3, 'imap://account/Empty')")
+            if labels {
+                // The fixtures allow duplicate labels and overlap with home membership.
+                try store.execute("INSERT INTO labels VALUES (1,1), (2,1), (2,1)")
+            } else {
+                try store.execute("DROP TABLE labels")
+            }
+            let database = try Database(root: store.root)
+            let counts = labels ? [3, 3, 1, 0] : [3, 2, 1, 0]
+            for (mailboxID, count) in zip([nil, .v10(1), .v10(2), .v10(3)] as [Mailbox.ID?], counts) {
+                let request = Message.FetchRequest(
+                    sender: "ALICE",
+                    subject: "Budget",
+                    mailboxID: mailboxID,
+                    startDate: Date(timeIntervalSince1970: 200),
+                    endDate: Date(timeIntervalSince1970: 201),
+                    isRead: true,
+                    limit: 1
+                )
+                let result = try database.search(request)
+                #expect(result.indexedMessageCount == count)
+                #expect(result.records.map(\.id.rowID) == (mailboxID == .v10(3) || (!labels && mailboxID == .v10(1)) ? [] : [2]))
+                #expect(result.nextCursor == nil)
+                #expect(result.request == request)
+            }
+        }
+
+        @Test("Scope counts exclude messages whose home mailbox is missing", arguments: [false, true])
+        func scopeCountsExcludeMissingMailboxes(labels: Bool) throws {
+            try store.execute(
+                """
+                INSERT INTO messages VALUES (4,999,1,1,400,0,'orphan@example.com'), (5,1,999,999,500,0,'missing-metadata@example.com');
+                INSERT INTO labels VALUES (4,1);
+                """
+            )
+            if !labels {
+                try store.execute("DROP TABLE labels")
+            }
+            let database = try Database(root: store.root)
+            let scopes: [(Mailbox.ID?, [Int64])] = [
+                (nil, [5, 3, 2, 1]),
+                (.v10(1), labels ? [5, 3, 2, 1] : [5, 3, 1]),
+                (.v10(2), [2]),
+            ]
+            for (mailboxID, expectedIDs) in scopes {
+                let result = try database.search(.init(mailboxID: mailboxID))
+                #expect(result.records.map(\.id.rowID) == expectedIDs)
+                #expect(result.nextCursor == nil)
+                #expect(result.indexedMessageCount == expectedIDs.count)
+                #expect(result.indexedMessageCount == result.records.count)
+            }
+        }
+
         @Test("Mailboxes report accounts from the account map, and tolerate missing metadata")
         func accountLabelsAndMissingMetadata() throws {
             let first = "11111111-1111-4111-8111-111111111111"

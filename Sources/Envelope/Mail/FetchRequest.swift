@@ -156,12 +156,18 @@ extension Message {
                 countOnly
                 ? "COUNT(*)" : "m.ROWID, m.mailbox, b.url, s.subject, a.address, m.date_received, m.read, m.message_id"
             let pagination = countOnly ? "" : "ORDER BY m.date_received DESC, m.ROWID DESC LIMIT ?"
+            // Both pages and counts exclude messages whose home mailbox is missing.
+            var joins = ["JOIN mailboxes b ON b.ROWID = m.mailbox"]
+            if !countOnly || subject != nil {
+                joins.append("LEFT JOIN subjects s ON s.ROWID = m.subject")
+            }
+            if !countOnly || sender != nil {
+                joins.append("LEFT JOIN addresses a ON a.ROWID = m.sender")
+            }
             let sql = """
                 SELECT \(columns)
                 FROM messages m
-                JOIN mailboxes b ON b.ROWID = m.mailbox
-                LEFT JOIN subjects s ON s.ROWID = m.subject
-                LEFT JOIN addresses a ON a.ROWID = m.sender
+                \(joins.joined(separator: "\n"))
                 \(whereClause)
                 \(pagination)
                 """
