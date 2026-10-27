@@ -65,7 +65,7 @@ public enum MailError: LocalizedError, Hashable {
         case .connectionClosed:
             return "The connection to the Mail index is closed."
         case .queryTimedOut:
-            return "Reading the Mail index exceeded the statement or snapshot time limit."
+            return "Reading the Mail index stopped at the time limit, to avoid delaying Mail. A search with more specific filters can finish sooner."
         case .queryFailed(let message):
             return "The Mail index cannot be read: \(message)"
         case .notContained(let url):

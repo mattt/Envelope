@@ -248,6 +248,32 @@ extension MailTests {
             }
         }
 
+        @Test("Scope counts exclude messages whose home mailbox is missing", arguments: [false, true])
+        func scopeCountsExcludeMissingMailboxes(labels: Bool) throws {
+            try store.execute(
+                """
+                INSERT INTO messages VALUES (4,999,1,1,400,0,'orphan@example.com'), (5,1,999,999,500,0,'missing-metadata@example.com');
+                INSERT INTO labels VALUES (4,1);
+                """
+            )
+            if !labels {
+                try store.execute("DROP TABLE labels")
+            }
+            let database = try Database(root: store.root)
+            let scopes: [(Mailbox.ID?, [Int64])] = [
+                (nil, [5, 3, 2, 1]),
+                (.v10(1), labels ? [5, 3, 2, 1] : [5, 3, 1]),
+                (.v10(2), [2]),
+            ]
+            for (mailboxID, expectedIDs) in scopes {
+                let result = try database.search(.init(mailboxID: mailboxID))
+                #expect(result.records.map(\.id.rowID) == expectedIDs)
+                #expect(result.nextCursor == nil)
+                #expect(result.indexedMessageCount == expectedIDs.count)
+                #expect(result.indexedMessageCount == result.records.count)
+            }
+        }
+
         @Test("Mailboxes report accounts from the account map, and tolerate missing metadata")
         func accountLabelsAndMissingMetadata() throws {
             let first = "11111111-1111-4111-8111-111111111111"

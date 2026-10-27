@@ -103,6 +103,7 @@ public actor Store {
         /// before the other filters and pagination apply.
         ///
         /// The count describes the local index only.
+        /// The count excludes messages whose home mailbox row is missing.
         /// A count of zero can mean an empty mailbox, or a mailbox that Mail has not indexed.
         /// The count is `nil` if counting exceeds the statement or snapshot time limit.
         public let indexedMessageCount: Int?

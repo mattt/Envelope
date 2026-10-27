@@ -200,7 +200,8 @@ final class Database {
     func search(_ request: Message.FetchRequest) throws -> SearchResult {
         try readTransaction {
             let page = try fetchPage(request)
-            // Count the selected local scope without the search filters or pagination.
+            // Count messages with an indexed home mailbox in the selected scope,
+            // without other search filters or pagination.
             let count: Int?
             do {
                 let scope = Message.FetchRequest(mailboxID: request.mailboxID)

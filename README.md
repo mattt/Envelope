@@ -116,7 +116,9 @@ After Mail moves to a new store, they fail with `MailError.storeChanged`.
 
 `SearchResult` contains the matching records, the next cursor, the request,
 and an optional `indexedMessageCount` for the selected mailbox scope
-(or the whole store if no mailbox is selected) before other filters and pagination.
+(or all mailboxes if no mailbox is selected) before other filters and pagination.
+Like the page query,
+the count excludes messages whose home mailbox row is missing.
 The count is `nil` if counting exceeds the statement or snapshot time limit;
 the search still returns the completed page and its next cursor.
 The records and any count come from one snapshot of the index.
