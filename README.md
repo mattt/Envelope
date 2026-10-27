@@ -115,9 +115,11 @@ and they encode as those strings in JSON.
 After Mail moves to a new store, they fail with `MailError.storeChanged`.
 
 `SearchResult` contains the matching records, the next cursor, the request,
-and `indexedMessageCount` for the selected mailbox scope before other filters
-and pagination.
-The records and the count come from one snapshot of the index.
+and an optional `indexedMessageCount` for the selected mailbox scope
+(or the whole store if no mailbox is selected) before other filters and pagination.
+The count is `nil` if counting exceeds the statement or snapshot time limit;
+the search still returns the completed page and its next cursor.
+The records and any count come from one snapshot of the index.
 This count does not describe server contents or account sync status.
 A zero count can mean an empty mailbox or incomplete local indexing.
 
@@ -186,7 +188,7 @@ let (mailboxes, unread) = try await store.withSnapshot { snapshot in
     let inbox = mailboxes.first { $0.name == "INBOX" }
     return (mailboxes, try snapshot.search(.init(mailboxID: inbox?.id, isRead: false)))
 }
-print(mailboxes.count, unread.indexedMessageCount, unread.records.count)
+print(mailboxes.count, unread.indexedMessageCount.map(String.init) ?? "unavailable", unread.records.count)
 ```
 
 ### Limits and cancellation

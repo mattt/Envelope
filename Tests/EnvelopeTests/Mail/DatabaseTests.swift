@@ -113,6 +113,51 @@ extension MailTests {
             #expect(try database.fetch(.init()).count == 3)
         }
 
+        @Test("A count timeout preserves the completed search page", arguments: [false, true])
+        func countTimeoutPreservesSearchPage(snapshotLimit: Bool) throws {
+            // These older messages do not enter the indexed date range of the page.
+            // Their unindexed label lookups make the scope count exceed its budget.
+            try store.execute(
+                """
+                CREATE INDEX messages_date_received ON messages(date_received);
+                WITH RECURSIVE counter(n) AS (
+                    SELECT 4 UNION ALL SELECT n + 1 FROM counter WHERE n < 20000
+                )
+                INSERT INTO messages
+                    SELECT n, 2, 1, 1, -n, 0, 'old@example.com' FROM counter;
+                INSERT INTO labels SELECT ROWID, 2 FROM messages WHERE ROWID >= 4;
+                """
+            )
+            let database = try Database(
+                root: store.root,
+                configuration: .init(queryTimeLimit: snapshotLimit ? .seconds(2) : .milliseconds(50))
+            )
+            if snapshotLimit {
+                database.snapshotDeadline = ContinuousClock.now.advanced(by: .milliseconds(50))
+            }
+            let request = Message.FetchRequest(
+                mailboxID: .v10(1),
+                startDate: Date(timeIntervalSince1970: 100),
+                limit: 1
+            )
+            let result = try database.search(request)
+            #expect(result.records.map(\.id.rowID) == [3])
+            #expect(result.nextCursor == result.records.last.map(Message.FetchRequest.Cursor.init(after:)))
+            #expect(result.indexedMessageCount == nil)
+            #expect(result.request == request)
+            #expect(store.checkpoint() == SQLITE_OK)
+
+            // An expired snapshot still rejects later statements.
+            if snapshotLimit {
+                #expect(throws: MailError.queryTimedOut) { try database.fetch(request) }
+                database.snapshotDeadline = nil
+            }
+            // The interrupted count does not prevent another page from being read.
+            var next = request
+            next.cursor = result.nextCursor
+            #expect(try database.fetch(next).map(\.id.rowID) == [2])
+        }
+
         @Test("A throwing transform releases the read lock")
         func thrownTransformReleasesReadLock() throws {
             let database = try Database(root: store.root)
