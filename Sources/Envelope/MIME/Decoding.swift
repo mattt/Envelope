@@ -171,7 +171,7 @@ extension Budget {
         }
         guard let charset = field(), !charset.isEmpty,
             let encoding = field(), encoding.count == 1,
-            let text = field(), index < input.count, input[index] == ASCII.equals
+            let text = field(), !text.isEmpty, index < input.count, input[index] == ASCII.equals
         else { return nil }
 
         let bytes: [UInt8]?

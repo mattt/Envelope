@@ -143,6 +143,9 @@ extension MIMETests {
         // RFC 2047 section 6.1: other character sequences are ordinary text.
         #expect(try parse("Subject: Is a=?b true\n\nBody").headers[0].value == "Is a=?b true")
         #expect(try parse("Subject: =?utf-8?Q?a b?=\n\nBody").headers[0].value == "=?utf-8?Q?a b?=")
+        for word in ["=?utf-8?Q??=", "=?utf-8?B??="] {
+            #expect(try parse("Subject: \(word)\n\nBody").headers[0].value == word)
+        }
     }
     @Test("Incorrectly formed encoded words do not stop the message")
     func incorrectlyFormedEncodedWordsDoNotStopTheMessage() throws {
